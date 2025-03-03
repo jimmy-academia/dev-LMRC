@@ -4,14 +4,16 @@ import openai
 
 from .base import BaseScheme
 
-class KeywordGPT4BasicScheme(BaseScheme):
+from debug import check
+
+class TaxonomyGPT4Scheme(BaseScheme):
     """
     Implements a basic GPT-4 approach:
       1) GPT-4 for comma-separated keyword generation
       2) Simple lexical search (any keyword match)
     """
     def prep_task_specifics(self):
-        logging.info("[KeywordGPT4BasicScheme] Using basic GPT-4 keyword generation.")
+        logging.info("[TaxonomyGPT4Scheme] Using basic GPT-4 keyword generation.")
         # e.g. load your openai.api_key if not already set in main.py
 
         categories_path = hf_hub_download(
@@ -21,6 +23,9 @@ class KeywordGPT4BasicScheme(BaseScheme):
         )
         with open(categories_path, "r") as f:
             self.all_categories = [line.strip() for line in f if line.strip()]
+
+        # prepare all category id
+        check()
 
     def _determine_category(self, query):
         """
@@ -57,7 +62,11 @@ class KeywordGPT4BasicScheme(BaseScheme):
         logging.info(f'located category: {category}')
         return category
 
-    def _in_category_ids()
+    def _in_category_ids(self, category):
+
+        ## return the ids in each category
+        final_item_ids = 0
+        return final_item_ids
 
     def _lexical_search(self, corpus, keywords):
         """
@@ -73,9 +82,9 @@ class KeywordGPT4BasicScheme(BaseScheme):
     def _get_final_candidates(self, query_text):
         # 1) Generate basic keywords
         category = self._determine_category(query_text)
-        final_item_ides = self._in_category_ids(category)
+        final_item_ids = self._in_category_ids(category)
 
         # 2) Run lexical search
         # corpus = [item['metadata'] for item in self.item_pool]
         # final_item_ids = self._lexical_search(corpus, keywords)
-        return final_item_ides
+        return final_item_ids

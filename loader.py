@@ -10,7 +10,7 @@ def get_task_loader(args):
     queries = load_dataset('McAuley-Lab/Amazon-C4')['test']
 
     if args.dev:
-        queries = queries.select(range(200))  # Subsample for dev
+        queries = queries.select(range(10))  # Subsample for dev
 
     logging.info(f"Loaded {len(queries)} test queries.")
 

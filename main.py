@@ -6,15 +6,24 @@ from pathlib import Path
 from loader import get_task_loader
 # main.py
 from scheme import (
+    EmbeddingRAGScheme,
     KeywordGPT4BasicScheme,
-    KeywordGPT4RefinedScheme,
-    KeywordGPT4RegexScheme,
-    EmbeddingRAGScheme
+    TaxonomyGPT4Scheme
 )
 
 from utils import set_seeds, set_verbose, readf
 
 import openai
+
+def setup_scheme(args, task_data):
+    if args.scheme == 'embedding_rag':
+        return EmbeddingRAGScheme(args, task_data)
+    elif args.scheme == 'keyword_gpt4':
+        return KeywordGPT4BasicScheme(args, task_data)
+    elif args.scheme == 'taxonomy':
+        return TaxonomyGPT4Scheme(args, task_data)
+    else:
+        raise ValueError(f"Unknown scheme: {args.scheme}")
 
 def set_arguments():
     parser = argparse.ArgumentParser(description='Run retrieval-based approaches on Amazon-C4.')
@@ -23,22 +32,20 @@ def set_arguments():
     
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     parser.add_argument('--verbose', type=int, default=1, help='verbose level')
-    parser.add_argument('--worker_llm', type=str, default="gpt-3.5-turbo", help='Worker LLM')
-    parser.add_argument('--planner_llm', type=str, default="gpt-4o", help='Planner LLM')
+    # parser.add_argument('--worker_llm', type=str, default="gpt-3.5-turbo", help='Worker LLM')
+    # parser.add_argument('--planner_llm', type=str, default="gpt-4o", help='Planner LLM')
     '''
     Possible embedding models:
     all-MiniLM-L6-v2, all-mpnet-base-v2, multi-qa-mpnet-base-cos-v1,
     all-roberta-large-v1, all-distilroberta-v1, paraphrase-mpnet-base-v2,
     sentence-t5-large (or sentence-t5-base)
     '''
-
     # logging decisions
     parser.add_argument('--ckpt', type=str, default='ckpt', help='checkpoint directory')
 
     # Task / Scheme
     parser.add_argument('--task', type=str, default='retrieval_task', help='Task name for logging/output files.')
-    parser.add_argument('--scheme', type=str, default='keyword_gpt4_basic', 
-                        # choices=['embedding_rag', 'keyword_gpt4_basic, '],
+    parser.add_argument('--scheme', type=str, default='keyword_gpt4', 
                         help='Which retrieval scheme to run.')
     parser.add_argument('--embedding_model', type=str, default="all-mpnet-base-v2",
                         help='Transformer model to use for embeddings')
@@ -52,26 +59,9 @@ def set_arguments():
 
     args = parser.parse_args()
 
-    #
-    # args.div
-
-
     # For dev mode only
     args.dev = True
     return args
-
-
-def setup_scheme(args, task_data):
-    if args.scheme == 'keyword_gpt4_basic':
-        return KeywordGPT4BasicScheme(args, task_data)
-    elif args.scheme == 'keyword_gpt4_refined':
-        return KeywordGPT4RefinedScheme(args, task_data)
-    elif args.scheme == 'keyword_gpt4_regex':
-        return KeywordGPT4RegexScheme(args, task_data)
-    elif args.scheme == 'embedding_rag':
-        return EmbeddingRAGScheme(args, task_data)
-    else:
-        raise ValueError(f"Unknown scheme: {args.scheme}")
 
 def main():
     args = set_arguments()
@@ -86,6 +76,7 @@ def main():
             "No 'cache/openaikey' file found. "
             "Make sure to set openai.api_key manually or via environment variables."
         )
+        input('check openai key')
 
     set_seeds(args.seed)
     set_verbose(args.verbose)

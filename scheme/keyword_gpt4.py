@@ -1,53 +1,68 @@
 import logging
-import os
-import json
+import re
+import openai
+from tqdm import tqdm
 
-from utils import dumpj
-from debug import check
 from .base import BaseScheme
 
-class KeywordGPT4Scheme(BaseScheme):
+class KeywordGPT4BasicScheme(BaseScheme):
     """
-    Scheme that uses GPT-4 to generate keywords, then does a naive keyword-based search.
+    Implements a basic GPT-4 approach:
+      1) GPT-4 for comma-separated keyword generation
+      2) Simple lexical search (any keyword match)
     """
-    def __init__(self, args, task_data):
-        super().__init__(args, task_data)
-        # Precompute tokenized metadata for naive matching
-        self.prepared_metadata = []
-        for item in self.item_pool:
-            tokens = item['metadata'].lower().split()
-            self.prepared_metadata.append(tokens)
-
     def prep_task_specifics(self):
-        logging.info("[KeywordGPT4Scheme] Ready to generate keywords & search items.")
+        logging.info("[KeywordGPT4BasicScheme] Using basic GPT-4 keyword generation.")
+        # e.g. load your openai.api_key if not already set in main.py
+    
+    def _generate_keywords(self, query):
+        """
+        Calls GPT-4 to produce a comma-separated list of keywords from the user query.
+        """
+        prompt = (
+            f"Extract the most important keywords from the following query for a lexical search: '{query}'. "
+            "Return a comma-separated list of keywords."
+        )
 
-    def _generate_keywords(self, query_text):
-        """
-        Child-specific GPT call to get keywords. 
-        Placeholder logic: Just take first 3 words as 'keywords'.
-        """
-        return query_text.lower().split()[:3]
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert assistant for generating search keywords."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=50,
+            temperature=0.0,
+        )
 
-    def _keyword_search(self, keywords, top_k=50):
-        """
-        A naive approach: Score each item by the number of keyword matches in metadata.
-        Return the top_k item indices (sorted by match_count desc).
-        """
-        scores = []
-        for idx, tokens in enumerate(self.prepared_metadata):
-            match_count = sum(kw in tokens for kw in keywords)
-            scores.append((match_count, idx))
+        # Extract the GPT-4 output
+        keywords_text = response.choices[0].message.content
+        # Parse comma-separated keywords
+        keywords = [word.strip() for word in keywords_text.split(",") if word.strip()]
+        return keywords
 
-        scores.sort(key=lambda x: x[0], reverse=True)
-        top_indices = [idx for _, idx in scores[:top_k]]
-        return top_indices
+    def _lexical_search(self, corpus, keywords):
+        """
+        Returns item_ids whose metadata contains ANY of the keywords (case-insensitive).
+        """
+        results = []
+        for idx, doc in enumerate(tqdm(corpus, desc='lexical search enumerate corpus', ncols=88)):
+            # If doc matches ANY of the keywords, add it
+            if any(re.search(r'\b' + re.escape(kw) + r'\b', doc, re.IGNORECASE) for kw in keywords):
+                results.append(self.item_pool[idx]['item_id'])
+        return results
 
     def _get_final_candidates(self, query_text):
-        """
-        Generates keywords, then does naive search, returns final item_ids.
-        """
+        # 1) Generate basic keywords
         keywords = self._generate_keywords(query_text)
-        top_indices = self._keyword_search(keywords, top_k=50)
-        # Convert indices -> item_ids
-        final_item_ids = [self.item_pool[i]['item_id'] for i in top_indices]
+        logging.info(f'keywords: {keywords}')
+        # 2) Run lexical search
+        corpus = [item['metadata'] for item in self.item_pool]
+        final_item_ids = self._lexical_search(corpus, keywords)
+        logging.info(f'length of final_item_ids: {len(final_item_ids)}')
         return final_item_ids

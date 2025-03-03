@@ -53,7 +53,9 @@ class BaseScheme:
             qid = q['qid']
             query_text = q['query']
             ground_truth = q['item_id']
-            
+                
+            logging.info(f"Query text: {query_text}")
+
             # Retrieve final candidate item_ids from child scheme
             final_candidates = self._get_final_candidates(query_text)
             # Make sure it's a list of item_ids
@@ -66,14 +68,14 @@ class BaseScheme:
             # Check if ground truth is in the retrieved set
             in_candidate = (ground_truth in final_candidates)
             total += 1
+            rank = -1
             if in_candidate:
                 in_count += 1
-                rank_list.append(final_candidates.index(ground_truth))
-            else:
-                rank_list.append(-1)
+                rank = final_candidates.index(ground_truth)
 
+            rank_list.append(rank)
 
-            logging.info(f"Ground truth in final candidates: {in_candidate}")
+            logging.info(f"Ground truth in final candidates: {in_candidate}; rank: {rank}")
 
             # Evaluate NDCG@50
             ndcg_val = compute_ndcg_at_50(final_candidates, ground_truth)
