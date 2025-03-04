@@ -52,7 +52,7 @@ class BaseScheme:
         for q in self.queries:
             qid = q['qid']
             query_text = q['query']
-            ground_truth = q['item_id']
+            self.ground_truth = q['item_id']
                 
             logging.info(f"Query text: {query_text}")
 
@@ -66,25 +66,25 @@ class BaseScheme:
             final_candidates = final_candidates[: self.top_k]
 
             # Check if ground truth is in the retrieved set
-            in_candidate = (ground_truth in final_candidates)
+            in_candidate = (self.ground_truth in final_candidates)
             total += 1
             rank = -1
             if in_candidate:
                 in_count += 1
-                rank = final_candidates.index(ground_truth)
+                rank = final_candidates.index(self.ground_truth)
 
             rank_list.append(rank)
 
             logging.info(f"Ground truth in final candidates: {in_candidate}; rank: {rank}")
 
             # Evaluate NDCG@50
-            ndcg_val = compute_ndcg_at_50(final_candidates, ground_truth)
+            ndcg_val = compute_ndcg_at_50(final_candidates, self.ground_truth)
             all_ndcgs.append(ndcg_val)
 
             record = {
                 'query_id': qid,
                 'query': query_text,
-                'ground_truth_item': ground_truth,
+                'ground_truth_item': self.ground_truth,
                 'retrieved_items': final_candidates,
                 'ndcg_at_50': ndcg_val
             }

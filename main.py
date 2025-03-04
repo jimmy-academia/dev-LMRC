@@ -32,23 +32,22 @@ def set_arguments():
     
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     parser.add_argument('--verbose', type=int, default=1, help='verbose level')
-    # parser.add_argument('--worker_llm', type=str, default="gpt-3.5-turbo", help='Worker LLM')
-    # parser.add_argument('--planner_llm', type=str, default="gpt-4o", help='Planner LLM')
+    # logging decisions
+    parser.add_argument('--ckpt', type=str, default='ckpt', help='checkpoint directory')
+
+    # Task / Scheme
+    parser.add_argument('--task', type=str, default='retrieval_task', help='Task name for logging/output files.')
+    parser.add_argument('--scheme', type=str, default='taxonomy', 
+                        help='Which retrieval scheme to run.')
+    parser.add_argument('--embedding_model', type=str, default="all-mpnet-base-v2",
+                        help='Transformer model to use for embeddings')
     '''
     Possible embedding models:
     all-MiniLM-L6-v2, all-mpnet-base-v2, multi-qa-mpnet-base-cos-v1,
     all-roberta-large-v1, all-distilroberta-v1, paraphrase-mpnet-base-v2,
     sentence-t5-large (or sentence-t5-base)
     '''
-    # logging decisions
-    parser.add_argument('--ckpt', type=str, default='ckpt', help='checkpoint directory')
-
-    # Task / Scheme
-    parser.add_argument('--task', type=str, default='retrieval_task', help='Task name for logging/output files.')
-    parser.add_argument('--scheme', type=str, default='keyword_gpt4', 
-                        help='Which retrieval scheme to run.')
-    parser.add_argument('--embedding_model', type=str, default="all-mpnet-base-v2",
-                        help='Transformer model to use for embeddings')
+    
     parser.add_argument('--top_k', type=int, default=105841,
                         help='Max number of retrieved documents to consider in final results.')
     #1058417

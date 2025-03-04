@@ -1,7 +1,8 @@
 import logging
 import re
 import openai
-
+from huggingface_hub import hf_hub_download
+from collections import defaultdict
 from .base import BaseScheme
 
 from debug import check
@@ -25,7 +26,11 @@ class TaxonomyGPT4Scheme(BaseScheme):
             self.all_categories = [line.strip() for line in f if line.strip()]
 
         # prepare all category id
-        check()
+        self.category_ids = defaultdict(list)
+        self.id2cat = {}
+        for item in self.item_pool:
+            self.category_ids[item['category']].append(item['item_id'])
+            self.id2cat[item['item_id']] = item['category']
 
     def _determine_category(self, query):
         """
@@ -65,8 +70,10 @@ class TaxonomyGPT4Scheme(BaseScheme):
     def _in_category_ids(self, category):
 
         ## return the ids in each category
-        final_item_ids = 0
-        return final_item_ids
+        if category in self.category_ids:
+            return self.category_ids[category]
+        else:
+            return []
 
     def _lexical_search(self, corpus, keywords):
         """
@@ -82,6 +89,13 @@ class TaxonomyGPT4Scheme(BaseScheme):
     def _get_final_candidates(self, query_text):
         # 1) Generate basic keywords
         category = self._determine_category(query_text)
+
+        logging.info(f'gpt suggest category: {category}')
+        logging.info(f'ground truth: {self.id2cat[self.ground_truth]}')
+
+        if category != self.id2cat[self.ground_truth]:
+            return []
+            
         final_item_ids = self._in_category_ids(category)
 
         # 2) Run lexical search
