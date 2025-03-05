@@ -14,6 +14,8 @@ queries = load_dataset('McAuley-Lab/Amazon-C4')['test']
 {'qid': 0, 'query': "I need filters that effectively trap dust and improve the air quality in my home. It's surprising how much dust they can collect in just a few months.", 'item_id': 'B0C5QYYHTJ', 'user_id': 'AGREO2G3GTRNYOJK4CIQV2DTZLSQ', 'ori_rating': 5, 'ori_review': 'These filters work I could not believe the amount of dust in the old filter when it was replaced after 3 months.  These really trap the dust and make my home a much healthier place.'}
 '''
 
+
+
 filepath = hf_hub_download(
         repo_id='McAuley-Lab/Amazon-C4',
         filename='sampled_item_metadata_1M.jsonl',
@@ -23,6 +25,31 @@ item_pool = []
 with open(filepath, 'r') as f:
     for line in f:
         item_pool.append(json.loads(line.strip()))
+
+b = [item for item in item_pool if item['category'] == 'Care']
+for item in item_pool:
+    a
+
+'''
+{'item_id': 'B0778XR2QM', 'category': 'Care', 'metadata': 'Supergoop! Super Power Sunscreen Mousse SPF 50, 7.1 Fl Oz. Product Description Kids, moms, and savvy sun-seekers will flip for this whip! Formulated with nourishing Shea butter and antioxidant packed Blue Sea Kale, this one-of-a kind mousse formula is making sunscreen super FUN! The refreshing light essence of cucumber and citrus has become an instant hit at Super goop! HQ where we’ve been known to apply gobs of it just for the uplifting scent. Water resistant for up to 80 minutes too! Brand Story Supergoop! is the first and only prestige skincare brand completely dedicated to sun protection. Supergoop! has Super Broad Spectrum protection, which means it protects skin from UVA rays, UVB rays and IRA rays.'}
+
+'''
+
+check()
+
+id2item = {}
+for item in item_pool:
+    id2item[item['item_id']] = item
+
+for query in queries:
+    print('===')
+    print(query['query'])
+    print('===')
+    print(query['ori_review'])
+    print('===')
+    print(id2item[query['item_id']])
+    input()
+
 
 
 category_itemids = defaultdict(list)
