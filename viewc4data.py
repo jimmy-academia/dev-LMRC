@@ -27,8 +27,8 @@ with open(filepath, 'r') as f:
         item_pool.append(json.loads(line.strip()))
 
 b = [item for item in item_pool if item['category'] == 'Care']
-for item in item_pool:
-    a
+# for item in item_pool:
+    # a
 
 '''
 {'item_id': 'B0778XR2QM', 'category': 'Care', 'metadata': 'Supergoop! Super Power Sunscreen Mousse SPF 50, 7.1 Fl Oz. Product Description Kids, moms, and savvy sun-seekers will flip for this whip! Formulated with nourishing Shea butter and antioxidant packed Blue Sea Kale, this one-of-a kind mousse formula is making sunscreen super FUN! The refreshing light essence of cucumber and citrus has become an instant hit at Super goop! HQ where we’ve been known to apply gobs of it just for the uplifting scent. Water resistant for up to 80 minutes too! Brand Story Supergoop! is the first and only prestige skincare brand completely dedicated to sun protection. Supergoop! has Super Broad Spectrum protection, which means it protects skin from UVA rays, UVB rays and IRA rays.'}
