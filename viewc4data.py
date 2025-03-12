@@ -14,6 +14,8 @@ queries = load_dataset('McAuley-Lab/Amazon-C4')['test']
 {'qid': 0, 'query': "I need filters that effectively trap dust and improve the air quality in my home. It's surprising how much dust they can collect in just a few months.", 'item_id': 'B0C5QYYHTJ', 'user_id': 'AGREO2G3GTRNYOJK4CIQV2DTZLSQ', 'ori_rating': 5, 'ori_review': 'These filters work I could not believe the amount of dust in the old filter when it was replaced after 3 months.  These really trap the dust and make my home a much healthier place.'}
 '''
 
+for i in range(5):
+    print(queries[i])
 
 
 filepath = hf_hub_download(
@@ -26,7 +28,20 @@ with open(filepath, 'r') as f:
     for line in f:
         item_pool.append(json.loads(line.strip()))
 
-b = [item for item in item_pool if item['category'] == 'Care']
+# b = [item for item in item_pool if item['category'] == 'Care']
+
+print(item_pool[0])
+
+category_list = []
+for item in item_pool:
+    if item['category'] not in category_list:
+        category_list.append(item['category'])
+
+print(category_list)
+
+
+input('===')
+
 # for item in item_pool:
     # a
 
