@@ -49,10 +49,29 @@ class FileSystem:
             metadata = item.get('metadata', '')
             item_id = item.get('item_id')
             
+            # Process metadata text to lowercase
+            metadata_lower = metadata.lower()
+            
             # Tokenize: extract words and convert to lowercase
-            tokens = set(re.findall(r'\w+', metadata.lower()))
+            # Store both individual words and pairs of adjacent words
+            tokens = set(re.findall(r'\b\w+\b', metadata_lower))
+            
+            # Index individual words
             for token in tokens:
                 self.inverted_index[token].add(item_id)
+                
+            # Additionally, index pairs of words (for common phrases)
+            words = re.findall(r'\b\w+\b', metadata_lower)
+            if len(words) >= 2:
+                for i in range(len(words) - 1):
+                    bigram = f"{words[i]} {words[i+1]}"
+                    self.inverted_index[bigram].add(item_id)
+                    
+            # Also index trigrams for common phrases of 3 words
+            if len(words) >= 3:
+                for i in range(len(words) - 2):
+                    trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
+                    self.inverted_index[trigram].add(item_id)
     
     def get_item_by_id(self, item_id):
         """Get an item by its ID - O(1) operation."""
@@ -69,7 +88,7 @@ class FileSystem:
             result['tags'] = list(self.item_tags[item_id])
             
         return result
-    
+        
     def navigate_to(self, path):
         """
         Navigate to a path and return information about that location.
@@ -86,17 +105,36 @@ class FileSystem:
         
         # Find all immediate subcategories and count items
         subcategories = {}
-        prefix = path + '/' if path != '/' else '/'
-        all_items = set(items_at_path)  # Start with items directly at this path
         
-        for subpath, items in self.path_to_items.items():
-            # Check if this is an immediate subcategory of the current path
-            if subpath.startswith(prefix) and subpath.count('/') == path.count('/') + 1:
-                subcat_name = subpath.split('/')[-1]
-                subcategories[subcat_name] = len(items)
-                all_items.update(items)
-            # Also include items in deeper subcategories for the total count
-            elif subpath.startswith(prefix):
+        # Special case for root path: show all top-level categories
+        if path == '/':
+            for subpath, items in self.path_to_items.items():
+                # Only include paths with one component after root (e.g., /Electronics)
+                if subpath.count('/') == 1 and subpath != '/':
+                    # Extract category name from path
+                    category = subpath[1:]  # Remove leading /
+                    subcategories[category] = len(items)
+        else:
+            # Regular case: find immediate subcategories of the current path
+            prefix = path + '/' if path != '/' else '/'
+            for subpath, items in self.path_to_items.items():
+                # Check if this is an immediate subcategory of the current path
+                if subpath.startswith(prefix) and subpath.count('/') == path.count('/') + 1:
+                    subcat_name = subpath.split('/')[-1]
+                    subcategories[subcat_name] = len(items)
+        
+        # Get all items at this path and in subdirectories
+        all_items = set(items_at_path)
+        
+        # For non-root paths, include items from subdirectories
+        if path != '/':
+            prefix = path + '/'
+            for subpath, items in self.path_to_items.items():
+                if subpath.startswith(prefix):
+                    all_items.update(items)
+        else:
+            # For root path, include all items
+            for _, items in self.path_to_items.items():
                 all_items.update(items)
         
         return {
@@ -104,26 +142,54 @@ class FileSystem:
             'subcategories': subcategories,
             'default_items': items_at_path
         }
-    
+        
     def keyword_search(self, keywords, path=None):
         """
         Search for items containing ANY of the keywords within the given path.
         If path is None, search all items.
         Returns a list of item_ids.
+        
+        Keywords can be either a single string or a list of keywords.
+        If a single string is provided, it will be split by commas.
         """
-        if not keywords:
+        # Handle input as either a string or a list
+        if isinstance(keywords, str):
+            # Split by commas and strip whitespace
+            keyword_list = [k.strip() for k in keywords.split(',')]
+        else:
+            keyword_list = keywords
+        
+        if not keyword_list:
             return []
         
-        # Convert single keyword to list
-        if isinstance(keywords, str):
-            keywords = [keywords]
+        # Process each keyword to ensure proper matching
+        processed_keywords = []
+        for kw in keyword_list:
+            # Remove any surrounding quotes or spaces
+            kw = kw.strip().strip('"\'')
+            if kw:
+                processed_keywords.append(kw)
         
-        # Get set of items for each keyword
+        # Get search results for each keyword
         results = set()
-        for keyword in keywords:
-            keyword = keyword.lower()
-            if keyword in self.inverted_index:
-                results.update(self.inverted_index[keyword])
+        for keyword in processed_keywords:
+            # Search for exact multi-word phrases or individual words
+            if ' ' in keyword:
+                # For multi-word phrases, search for items that contain all words
+                words = keyword.lower().split()
+                keyword_matches = set()
+                
+                for item_id, item in self.id_to_item.items():
+                    metadata = item.get('metadata', '').lower()
+                    # Check if ALL words from the keyword phrase appear in the metadata
+                    if all(word in metadata for word in words):
+                        keyword_matches.add(item_id)
+            else:
+                # For single words, use the inverted index
+                keyword_matches = self.inverted_index.get(keyword.lower(), set())
+            
+            # Add keyword matches to overall results
+            results.update(keyword_matches)
         
         # If path is specified, filter results to only include items at or below that path
         if path:

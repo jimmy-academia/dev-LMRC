@@ -58,7 +58,7 @@ class ReactAgent:
             print("\n" + "="*80)
             print(f"STEP {state['step_count'] + 1}: REASONING INPUT")
             print("="*80)
-            for msg in reasoning_messages[-2:]:  # Print the last two messages
+            for msg in reasoning_messages:  # Print the last two messages
                 print(f"[{msg['role'].upper()}]")
                 print(msg['content'])
                 print("-"*40)

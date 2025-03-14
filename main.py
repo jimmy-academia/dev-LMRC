@@ -69,10 +69,10 @@ def main():
     if os.path.exists(key_path):
         openai_api_key = readf(key_path).strip()
         openai.api_key = openai_api_key
-        logging.info("OpenAI API key loaded from 'cache/openaikey'.")
+        logging.info("OpenAI API key loaded from '.openaikey'.")
     else:
         logging.warning(
-            "No 'cache/openaikey' file found. "
+            "No '.openaikey' file found. "
             "Make sure to set openai.api_key manually or via environment variables."
         )
         input('check openai key')
