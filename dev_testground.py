@@ -206,7 +206,7 @@ def run_agent_iteration(item_pool, inverted_index, initial_query, steps=10):
     
     messages = [
         system_struct("You are an expert assistant for refining search results."),
-        user_struct(query)
+        user_struct(query),
         system_struct(f"Initially, we have an entire dataset in the candidate set. We want to iteratively put search result into positive set or negative set."
                     "We can perform the following actions:\n"
                     "1) 'Action: lexical_search <keyword>' to get a set of items.\n"

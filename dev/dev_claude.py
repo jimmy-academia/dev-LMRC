@@ -143,10 +143,26 @@ class CategoryFileSystem:
     
     def get_items_by_path(self, path: str) -> List[str]:
         """Get all items in a directory and its subdirectories."""
-        result = set()
+        # Normalize path (ensure it has leading slash)
+        if not path.startswith('/'):
+            path = '/' + path
+            
+        # For root path, collect items from all top-level categories
+        if path == '/':
+            result = set()
+            for directory, items in self.directories.items():
+                if directory.count('/') == 1:  # Only top-level categories
+                    result.update(items)
+            return list(result)
+        
+        # Direct lookup first
+        result = set(self.directories.get(path, set()))
+        
+        # Also add from subdirectories if we're looking for a category/subcategory
         for directory, items in self.directories.items():
-            if directory == path or directory.startswith(f"{path}/"):
+            if directory != path and directory.startswith(f"{path}/"):
                 result.update(items)
+                
         return list(result)
     
     def get_items_by_tag(self, tag: str) -> List[str]:
@@ -235,7 +251,7 @@ class CategoryFileSystem:
 
 class EnhancedIndex:
     """Enhanced search index with category, text, and tag-based search."""
-    def __init__(self, item_pool):
+    def __init__(self, item_pool, cache_path=None):
         # Text-based inverted index
         self.text_index = defaultdict(set)
         # Category-based index
@@ -243,8 +259,40 @@ class EnhancedIndex:
         # Category-to-subcategory suggestions (LLM generated)
         self.subcategory_suggestions = {}
         
+        # Try to load from cache first if path is provided
+        if cache_path and Path(cache_path).exists():
+            try:
+                print(f"Loading search index from {cache_path}...")
+                with open(cache_path, 'rb') as f:
+                    data = pickle.load(f)
+                    self.text_index = defaultdict(set, {k: set(v) for k, v in data.get('text_index', {}).items()})
+                    self.category_index = defaultdict(set, {k: set(v) for k, v in data.get('category_index', {}).items()})
+                    self.subcategory_suggestions = data.get('subcategory_suggestions', {})
+                print(f"Search index loaded with {len(self.text_index)} tokens and {len(self.category_index)} categories")
+                return
+            except Exception as e:
+                print(f"Error loading cache: {e}, building index from scratch...")
+        
+        # If we get here, either no cache or couldn't load it
         # Build the indexes
-        self._build_indexes(item_pool)
+        if item_pool:
+            print("Building search indexes...")
+            self._build_indexes(item_pool)
+            
+            # Save to cache if path provided
+            if cache_path:
+                try:
+                    print(f"Saving search index to {cache_path}...")
+                    data = {
+                        'text_index': {k: list(v) for k, v in self.text_index.items()},
+                        'category_index': {k: list(v) for k, v in self.category_index.items()},
+                        'subcategory_suggestions': self.subcategory_suggestions
+                    }
+                    with open(cache_path, 'wb') as f:
+                        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+                    print("Search index saved successfully")
+                except Exception as e:
+                    print(f"Error saving cache: {e}")
     
     def _build_indexes(self, item_pool):
         """Build the search indexes from the item pool."""
@@ -286,6 +334,32 @@ class EnhancedIndex:
     def get_all_categories(self) -> List[str]:
         """Get a list of all categories."""
         return list(self.category_index.keys())
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for serialization."""
+        return {
+            "text_index": {k: list(v) for k, v in self.text_index.items()},
+            "category_index": {k: list(v) for k, v in self.category_index.items()},
+            "subcategory_suggestions": self.subcategory_suggestions
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'EnhancedIndex':
+        """Create from dictionary."""
+        index = cls()
+        
+        # Restore text index
+        for token, indices in data["text_index"].items():
+            index.text_index[token] = set(indices)
+        
+        # Restore category index
+        for category, indices in data["category_index"].items():
+            index.category_index[category] = set(indices)
+        
+        # Restore subcategory suggestions
+        index.subcategory_suggestions = data.get("subcategory_suggestions", {})
+        
+        return index
 
 ########################################
 # 4. LLM Client for Intelligence
@@ -329,7 +403,7 @@ class ReactAgent:
         self.llm_client = llm_client
         
         # Search state tracking
-        self.enhanced_index = EnhancedIndex(item_pool)
+        self.enhanced_index = None  # Will be set later with cached version
         self.search_results = []
         self.current_query = ""
         self.current_reasoning = ""
@@ -345,15 +419,59 @@ class ReactAgent:
         }
     
     def initialize_file_system(self):
-        """Process all items into the file system."""
+        """Process all items into the file system with their existing categories."""
         print("Initializing category file system...")
+        
+        # Track counts for verification
+        category_counts = defaultdict(int)
+        items_processed = 0
+        items_with_category = 0
+        
         for idx, item in enumerate(tqdm(self.item_pool, desc="Processing items", ncols=88)):
+            # Extract item data ensuring we capture the existing category
+            item_id = item.get('item_id', f'unknown_{idx}')
+            category = item.get('category', '')  # Existing category from item_pool
+            metadata = item.get('metadata', '')
+            
+            # Skip empty categories
+            if not category or category.strip() == '':
+                continue
+                
+            items_with_category += 1
+            category_counts[category] += 1
+            
+            # Create item metadata object
             meta = ItemMetadata(
-                item_id=item.get('item_id', ''),
-                category=item.get('category', ''),
-                raw_metadata=item.get('metadata', '')
+                item_id=item_id,
+                category=category,  # Use the category from the item_pool
+                raw_metadata=metadata
             )
+            
+            # Add to file system which will place it in the correct category directory
             self.fs.add_item(meta)
+            items_processed += 1
+            
+            # Print progress periodically
+            if idx % 100000 == 0 and idx > 0:
+                print(f"Processed {idx} items, {items_with_category} with categories...")
+            
+        # Print category statistics
+        print(f"\nCategory distribution for {items_processed} items:")
+        for category, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {category}: {count} items")
+            
+        # Verify items are in directories
+        total_in_dirs = sum(len(items) for items in self.fs.directories.values())
+        print(f"\nItems in directories: {total_in_dirs}")
+        
+        # Debug: Check the first few directories
+        print("\nSample directory contents:")
+        for i, (path, items) in enumerate(list(self.fs.directories.items())[:5]):
+            print(f"  {path}: {len(items)} items")
+            if items:
+                sample_id = next(iter(items))
+                print(f"    Sample item: {self.fs.items[sample_id].raw_metadata[:50]}...")
+
     
     def search(self, query, max_steps=10):
         """Run the REACT loop for a search query."""
@@ -367,7 +485,8 @@ class ReactAgent:
             "explored_paths": set(),
             "relevant_tags": set(),
             "previously_viewed_items": set(),
-            "category_insights": {}
+            "category_insights": {},  # Maps category -> observations
+            "previous_actions": []    # Track previous actions with results
         }
         
         # Extract search requirements using LLM
@@ -380,15 +499,16 @@ class ReactAgent:
             # 1. Reasoning - Decide what to do next
             reasoning = self._reasoning_step()
             self.current_reasoning = reasoning
-            print(f"Reasoning:\n{reasoning[:300]}..." if len(reasoning) > 300 else reasoning)
+            print(f"Reasoning:\n{reasoning}")  # Print full reasoning
             
             # 2. Action - Execute the chosen action
             action = self._determine_next_action(reasoning)
             print(f"Action: {action['type']}")
+            print(f"Params: {action['params']}")
             
             # 3. Observation - Record the results
             observation = self._execute_action(action)
-            print(f"Observation Summary: {observation[:100]}..." if len(observation) > 100 else observation)
+            print(f"Observation:\n{observation}")  # Print full observation
             
             # Check if search is complete
             if "SEARCH_COMPLETE" in action['type']:
@@ -482,6 +602,10 @@ class ReactAgent:
         # Get subdirectories
         subdirs = self.fs.get_subdirectories(current_path)
         
+        # Prepare conditional parts separately
+        recent_results_part = f"Recent Search Results:\n{recent_results}" if recent_results else "No recent search results."
+        samples_part = f"Current Items Sample:\n{sample_items_text}" if sample_items_text else "No items in current path."
+        
         # Build the reasoning prompt
         prompt = f"""
         ## Search Context
@@ -496,9 +620,9 @@ class ReactAgent:
         
         Relevant Tags: {', '.join(self.context['relevant_tags']) if self.context['relevant_tags'] else 'None'}
         
-        {f"Recent Search Results:\n{recent_results}" if recent_results else "No recent search results."}
+        {recent_results_part}
         
-        {f"Current Items Sample:\n{sample_items_text}" if sample_items_text else "No items in current path."}
+        {samples_part}
         
         ## Reasoning Task
         As a search agent, reason about the best next action to find products matching the query:
@@ -582,30 +706,123 @@ class ReactAgent:
         action_type = action["type"]
         params = action["params"]
         
+        # Record this action
+        action_record = {
+            "type": action_type,
+            "params": params
+        }
+        
+        # Add to previous actions
+        if "previous_actions" not in self.context:
+            self.context["previous_actions"] = []
+        
+        result = None
         if action_type == "NAVIGATE_TO_CATEGORY":
-            return self._action_navigate_to_category(params)
+            result = self._action_navigate_to_category(params)
         elif action_type == "NAVIGATE_TO_PATH":
-            return self._action_navigate_to_path(params)
+            result = self._action_navigate_to_path(params)
         elif action_type == "TEXT_SEARCH":
-            return self._action_text_search(params)
+            result = self._action_text_search(params)
+            # Check if we got zero results
+            if "found 0 results" in result:
+                action_record["result_count"] = 0
+                
+                # Include search strategy advice if needed
+                if params and ',' in params:
+                    keywords = [k.strip() for k in params.split(',')]
+                    if len(keywords) > 2:
+                        # Add suggestion for narrower search
+                        result += "\n\nSEARCH STRATEGY ADVICE: Your search used multiple keywords: " + params
+                        result += "\nThis search method requires documents to contain ALL keywords."
+                        result += "\nTry searching with fewer keywords, such as:"
+                        for i in range(min(3, len(keywords))):
+                            result += f"\n- '{keywords[i]}'"
+            else:
+                # Extract result count from the text
+                match = re.search(r'found (\d+) results', result)
+                if match:
+                    action_record["result_count"] = int(match.group(1))
         elif action_type == "CREATE_SUBCATEGORIES":
-            return self._action_create_subcategories()
+            result = self._action_create_subcategories()
+        elif action_type == "ORGANIZE_SEARCH_RESULTS":
+            result = self._action_organize_search_results(params)
         elif action_type == "ASSIGN_TAGS":
-            return self._action_assign_tags()
+            result = self._action_assign_tags()
         elif action_type == "FILTER_BY_TAGS":
-            return self._action_filter_by_tags(params)
+            result = self._action_filter_by_tags(params)
         elif action_type == "EVALUATE_ITEMS":
-            return self._action_evaluate_items()
+            result = self._action_evaluate_items()
         elif action_type == "SEARCH_COMPLETE":
-            return "Search complete. Finalizing results."
+            result = "Search complete. Finalizing results."
         else:
-            return f"Unknown action type: {action_type}"
+            result = f"Unknown action type: {action_type}"
+        
+        # Save the result
+        action_record["result"] = result
+        self.context["previous_actions"].append(action_record)
+            
+        return result
+            
+    def _action_organize_search_results(self, subcategory_path):
+        """Organize current search results into specified subcategory path."""
+        if not self.search_results:
+            return "No search results to organize."
+            
+        if not subcategory_path:
+            # Ask LLM to suggest a path
+            prompt = """
+Based on the current search results, suggest a meaningful subcategory path where these items should be organized.
+Format the path using slash notation, for example: 'Electronics/Audio/Portable Speakers/Waterproof'
+Consider the common characteristics and attributes of the items in the search results.
+            """
+            subcategory_path = self.llm_client(prompt).strip()
+            
+        # Normalize path (remove leading slash if present)
+        if subcategory_path.startswith('/'):
+            subcategory_path = subcategory_path[1:]
+            
+        # Extract the base category from the path
+        path_parts = subcategory_path.split('/')
+        base_category = path_parts[0]
+        
+        # Check if base category exists
+        categories = self.enhanced_index.get_all_categories()
+        if base_category not in categories:
+            return f"Base category '{base_category}' not found. Available categories: {', '.join(categories[:5])}..."
+            
+        # Get item IDs from search results
+        organized_count = 0
+        for idx in self.search_results:
+            item = self.item_pool[idx]
+            item_id = item.get('item_id')
+            
+            if item_id in self.fs.items:
+                # Update the path
+                full_path = '/' + subcategory_path
+                self.fs.organize_item(item_id, full_path)
+                organized_count += 1
+                
+        # Sample some organized items to show
+        items_in_path = self.fs.get_items_by_path('/' + subcategory_path)
+        sample_size = min(3, len(items_in_path))
+        
+        if sample_size > 0:
+            sample_ids = random.sample(items_in_path, sample_size)
+            samples = []
+            for i, item_id in enumerate(sample_ids):
+                item = self.fs.items[item_id]
+                samples.append(f"Sample {i+1}: {item.raw_metadata[:150]}...")
+            samples_text = "\n".join(samples)
+        else:
+            samples_text = "No items in this path."
+            
+        return f"Organized {organized_count} search results into path '/{subcategory_path}'.\n\n{samples_text}"
     
     def _action_navigate_to_category(self, category_name):
         """Navigate to a root category."""
         if not category_name:
             # Try to pick from top categories if available
-            if hasattr(self.context, "top_categories") and self.context["top_categories"]:
+            if "top_categories" in self.context and self.context["top_categories"]:
                 category_name = self.context["top_categories"][0]
             else:
                 # Default to first category in the index
@@ -615,27 +832,125 @@ class ReactAgent:
                 else:
                     return "No category specified and no categories available."
         
+        # Handle case where LLM suggests multiple categories (comma-separated or "and" separated)
+        if ',' in category_name or ' and ' in category_name:
+            # Split into multiple categories
+            multi_categories = []
+            for separator in [',', ' and ']:
+                if separator in category_name:
+                    multi_categories.extend([c.strip() for c in category_name.split(separator)])
+            
+            if multi_categories:
+                category_name = multi_categories[0]  # Use the first one for navigation
+                print(f"Multiple categories detected: {multi_categories}")
+                print(f"Navigating to first category: {category_name}")
+                # Store others for potential exploration
+                self.context["other_categories"] = multi_categories[1:]
+        
+        # Normalize category name (match case with available categories)
+        available_categories = self.enhanced_index.get_all_categories()
+        matched_category = None
+        for avail_cat in available_categories:
+            if avail_cat.lower() == category_name.lower():
+                matched_category = avail_cat
+                break
+        
+        if matched_category:
+            category_name = matched_category
+        else:
+            # Try to find the best matching category
+            print(f"Couldn't find exact match for category '{category_name}'")
+            best_match = None
+            best_score = 0
+            
+            for avail_cat in available_categories:
+                # Simple string matching
+                if category_name.lower() in avail_cat.lower() or avail_cat.lower() in category_name.lower():
+                    score = len(set(category_name.lower()) & set(avail_cat.lower()))
+                    if score > best_score:
+                        best_score = score
+                        best_match = avail_cat
+            
+            if best_match:
+                print(f"Using closest matching category: '{best_match}'")
+                category_name = best_match
+            else:
+                return f"Could not find category '{category_name}' or any close match."
+        
         # Update current path
         self.context["current_path"] = f"/{category_name}"
         self.context["explored_paths"].add(self.context["current_path"])
         
         # Get items in this category
         items = self.fs.get_items_by_path(self.context["current_path"])
-        subdirs = self.fs.get_subdirectories(self.context["current_path"])
+        
+        # Get and analyze subcategories
+        subcategory_info = self._analyze_subdirectories(self.context["current_path"])
+        
+        # Debug info
+        print(f"Navigating to /{category_name}")
+        print(f"Found {len(items)} items and {len(subcategory_info)} subcategories")
+        print(f"Directory structure: {len(self.fs.directories)} paths and {len(self.fs.items)} total items")
+        print(f"Category paths: {[path for path in self.fs.directories.keys() if category_name in path][:5]}")
         
         # Sample a few items to show
-        sample_size = min(3, len(items))
-        if sample_size > 0:
+        sample_text = ""
+        if items:
+            sample_size = min(5, len(items))
             sample_ids = random.sample(items, sample_size)
             samples = []
             for i, item_id in enumerate(sample_ids):
-                item = self.fs.items[item_id]
-                samples.append(f"Sample {i+1}: {item.raw_metadata[:150]}...")
-            samples_text = "\n".join(samples)
+                if item_id in self.fs.items:
+                    item = self.fs.items[item_id]
+                    samples.append(f"Sample {i+1}: {item.raw_metadata}")
+            sample_text = "\n".join(samples)
         else:
-            samples_text = "No items in this category."
+            # Check if category has any items
+            category_items = [item_id for item_id, item in self.fs.items.items() if item.category == category_name]
+            if category_items:
+                sample_text = f"Category has {len(category_items)} items, but none found at path /{category_name}. This may be a file system issue."
+            else:
+                sample_text = "No items in this category."
         
-        return f"Navigated to category /{category_name}\nItems: {len(items)}\nSubdirectories: {len(subdirs)}\n\n{samples_text}"
+        # Create response with subcategory information
+        subcategory_text = ""
+        if subcategory_info:
+            subcategory_text = "\nSubcategories available:\n"
+            for subcat, count in subcategory_info:
+                subcategory_text += f"- {subcat} ({count} items)\n"
+        else:
+            subcategory_text = "\nNo subcategories available at this level."
+        
+        return f"Navigated to category /{category_name}\nItems: {len(items)}\n{subcategory_text}\n\n{sample_text}"
+        
+    def _analyze_subdirectories(self, path):
+        """Analyze what subdirectories exist and how many items they contain."""
+        subdirs = self.fs.get_subdirectories(path)
+        if not subdirs:
+            # Try to find any paths that would be child paths of the current path
+            child_paths = []
+            for directory in self.fs.directories.keys():
+                if directory.startswith(path + '/'):
+                    # Extract the next component of the path
+                    remaining = directory[len(path) + 1:]
+                    if '/' in remaining:
+                        next_part = remaining.split('/')[0]
+                        child_paths.append(path + '/' + next_part)
+                    else:
+                        child_paths.append(directory)
+            
+            # Remove duplicates
+            subdirs = list(set(child_paths))
+        
+        # Get item counts for each subdirectory
+        subdir_info = []
+        for subdir in subdirs:
+            # Extract just the name of the subdirectory
+            name = subdir.split('/')[-1] if '/' in subdir else subdir
+            items = self.fs.get_items_by_path(subdir)
+            subdir_info.append((name, len(items)))
+        
+        return sorted(subdir_info, key=lambda x: x[1], reverse=True)
     
     def _action_navigate_to_path(self, path):
         """Navigate to a specific path in the file system."""
@@ -675,10 +990,22 @@ class ReactAgent:
         
         return f"Navigated to {path}\nItems: {len(items)}\nSubdirectories: {len(subdirs)}\n\n{samples_text}"
     
-    def _action_text_search(self, query):
+    def _action_text_search(self, params):
         """Perform a text search, optionally scoped to current path."""
-        if not query:
+        if not params:
             return "No search query specified."
+        
+        # Check if this is a union or intersection search
+        search_type = "standard"
+        if " OR " in params:
+            search_type = "union"
+            search_parts = [part.strip() for part in params.split(" OR ")]
+        elif " AND " in params:
+            search_type = "intersection"
+            search_parts = [part.strip() for part in params.split(" AND ")]
+        else:
+            # Standard search
+            search_parts = [params]
         
         # Determine if we should scope to current category
         current_path = self.context["current_path"]
@@ -687,17 +1014,48 @@ class ReactAgent:
             category = current_path.strip('/').split('/')[0]
             category_filter = category
         
-        # Perform the search
-        search_results = self.enhanced_index.search_by_text(query, category_filter)
-        self.search_results = list(search_results)
+        # Keep track of results for each part
+        result_count = 0
+        search_results = set()
         
-        # If no results, try without category filter
-        if not search_results and category_filter:
-            search_results = self.enhanced_index.search_by_text(query)
+        # Perform the search based on search type
+        if search_type == "standard":
+            search_results = self.enhanced_index.search_by_text(params, category_filter)
             self.search_results = list(search_results)
+            result_count = len(search_results)
+            
+            # If no results, try without category filter
+            if not search_results and category_filter:
+                search_results = self.enhanced_index.search_by_text(params)
+                self.search_results = list(search_results)
+                result_count = len(search_results)
+        
+        elif search_type == "union":
+            # Union search - combine results from each term
+            print(f"Performing UNION search with terms: {search_parts}")
+            for term in search_parts:
+                term_results = self.enhanced_index.search_by_text(term, category_filter)
+                search_results.update(term_results)
+            
+            self.search_results = list(search_results)
+            result_count = len(search_results)
+        
+        elif search_type == "intersection":
+            # Intersection search - find items that match all terms
+            print(f"Performing INTERSECTION search with terms: {search_parts}")
+            # Start with the first term's results
+            if search_parts:
+                search_results = self.enhanced_index.search_by_text(search_parts[0], category_filter)
+                # Intersect with each additional term
+                for term in search_parts[1:]:
+                    term_results = self.enhanced_index.search_by_text(term, category_filter)
+                    search_results.intersection_update(term_results)
+                
+                self.search_results = list(search_results)
+                result_count = len(search_results)
         
         # Sample results to show
-        sample_size = min(5, len(search_results))
+        sample_size = min(5, result_count)
         samples_text = ""
         
         if sample_size > 0:
@@ -722,14 +1080,37 @@ class ReactAgent:
                 samples.append(
                     f"Result {i+1}:\nPath: {path}\n" + 
                     (f"Tags: {', '.join(tags)}\n" if tags else "") + 
-                    f"Description: {item.get('metadata', '')[:150]}..."
+                    f"Description: {item.get('metadata', '')}"
                 )
             
             samples_text = "\n\n".join(samples)
         else:
             samples_text = "No results found."
+            
+            # Provide search advice based on search type
+            if search_type == "standard" and "," in params:
+                keywords = [k.strip() for k in params.split(',')]
+                if len(keywords) > 1:
+                    samples_text += f"\n\nSEARCH STRATEGY ADVICE: Your search used multiple keywords: {params}"
+                    samples_text += "\nThis search method requires documents to contain ALL keywords."
+                    samples_text += "\nTry searching with fewer keywords, such as:"
+                    for i in range(min(3, len(keywords))):
+                        samples_text += f"\n- '{keywords[i]}'"
+                    samples_text += f"\n\nOr try a UNION search to find documents with ANY of these keywords:"
+                    samples_text += f"\n- '{keywords[0]} OR {keywords[1]}'"
+            elif search_type == "union" and result_count == 0:
+                samples_text += "\n\nEven a union search returned zero results. Try using more generic keywords."
+            elif search_type == "intersection" and result_count == 0:
+                samples_text += "\n\nThe intersection search is too restrictive. Try using a union search instead."
         
-        return f"Text search for '{query}' found {len(search_results)} results.\n\n{samples_text}"
+        # Return appropriate search type description
+        search_description = params
+        if search_type == "union":
+            search_description = " OR ".join(search_parts)
+        elif search_type == "intersection":
+            search_description = " AND ".join(search_parts)
+        
+        return f"{search_type.capitalize()} text search for '{search_description}' found {result_count} results.\n\n{samples_text}"
     
     def _action_create_subcategories(self):
         """Create subcategories for the current path."""
@@ -1274,20 +1655,57 @@ def main():
     # Create LLM client
     llm_client = create_llm_client()
     
-    # Create and initialize agent
+    # Create agent with cached search index
+    index_cache = Path('cache/search_index.pkl')
     agent = ReactAgent(item_pool, fs, llm_client)
+    agent.enhanced_index = EnhancedIndex(item_pool, cache_path=index_cache)
     
-    # Initialize file system if needed
+    # Initialize file system if needed or verify existing one
     if len(fs.items) == 0:
+        print("File system is empty. Initializing...")
         agent.initialize_file_system()
         save_file_system(fs, fs_pkl)
+    else:
+        print(f"File system loaded with {len(fs.items)} items")
+        
+        # Verify categories have items
+        categories = agent.enhanced_index.get_all_categories()
+        print("\nVerifying category contents:")
+        categories_with_issues = []
+        
+        for category in categories[:10]:  # Check first 10 categories
+            path = f"/{category}"
+            items = fs.get_items_by_path(path)
+            print(f"  {category}: {len(items)} items")
+            
+            if len(items) == 0:
+                categories_with_issues.append(category)
+                # Check if items exist for this category
+                matching_items = [item_id for item_id, item in fs.items.items() if item.category == category]
+                if matching_items:
+                    print(f"    Category '{category}' has {len(matching_items)} items in fs.items but 0 in path")
+                    
+        if categories_with_issues:
+            print("\nSome categories have issues. Reinitializing file system...")
+            # Backup existing file system
+            if fs_pkl.exists():
+                import shutil
+                backup_path = fs_pkl.with_suffix('.bak')
+                shutil.copy2(fs_pkl, backup_path)
+                print(f"Backed up existing file system to {backup_path}")
+            
+            # Create fresh file system
+            fs = CategoryFileSystem()
+            agent.fs = fs
+            agent.initialize_file_system()
+            save_file_system(fs, fs_pkl)
     
-    # Use a sample query from the dataset
+    # Always use the first query from the dataset
     query = queries[0]['query']
-    print(f"Query: {query}")
+    print(f"\nRunning search for: \"{query}\"")
     
-    # Run the search process
-    results = agent.search(query, max_steps=10)
+    # Run the search process with 5 steps instead of 10
+    results = agent.search(query, max_steps=5)  # Changed from 10 to 5
     
     # Save updated file system
     save_file_system(fs, fs_pkl)
@@ -1295,18 +1713,21 @@ def main():
     # Create an output report
     create_output_report(results, Path('cache/search_results.html'))
     
-    print("Search complete.")
+    print("\nSearch complete.")
     
-    # Print top matches
+    # Print top matches with full descriptions
     if results["success"]:
         print("\nTop Matches:")
         for i, item in enumerate(results["items"][:5]):
-            print(f"{i+1}. {item['metadata'][:100]}...")
+            print(f"{i+1}. {item['metadata']}")  # Print full metadata
             if "path" in item:
                 print(f"   Path: {item['path']}")
             if "tags" in item:
                 print(f"   Tags: {', '.join(item['tags'])}")
             print()
+        
+        print(f"\nSearch summary: {results['summary']}")
+        print(f"\nFor full results, see: {Path('cache/search_results.html').absolute()}")
     else:
         print(f"\nSearch failed: {results['message']}")
 
