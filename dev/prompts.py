@@ -59,3 +59,53 @@ Step {state["step_count"] + 1} of {max_steps}
 
 {AVAILABLE_ACTIONS}
 """
+
+# Define a new single-step prompt for Reasoning + Action in JSON format without triple backticks.
+SINGLE_STEP_PROMPT = """
+You are an advanced ReAct agent. Your goal is to achieve the user's query: "{query}"
+by performing step-by-step reasoning and choosing from an available set of actions.
+
+Important: You must output valid JSON in the following format:
+{{
+  "reasoning": "<your hidden chain-of-thought reasoning here>",
+  "action": {{
+    "name": "<one of the available actions>",
+    "params": {{
+        // key-value pairs relevant to the action
+    }}
+  }}
+}}
+
+1. Reasoning: Think carefully about the next best step to find or organize items that match the query.
+2. Action: Choose exactly one from the available actions:
+   - Navigate: Move to a subdirectory/category
+     - name: "Navigate"
+     - params: {{ "path": "/some/path" }}
+   - Search: Search within the current path
+     - name: "Search"
+     - params: {{ "keywords": ["keyword1", "keyword2", ...] }}
+   - CreateSubcategory: Create a new subcategory with provided item IDs
+     - name: "CreateSubcategory"
+     - params: {{ "name": "subcategory_name", "item_ids": ["id1", "id2", ...] }}
+   - AddTag: Add a tag to specified items
+     - name: "AddTag"
+     - params: {{ "tag": "some_tag", "item_ids": ["id1", "id2", ...] }}
+   - RemoveTag: Remove a tag from specified items
+     - name: "RemoveTag"
+     - params: {{ "tag": "some_tag", "item_ids": ["id1", "id2", ...] }}
+   - GetByTag: Retrieve items with a given tag
+     - name: "GetByTag"
+     - params: {{ "tag": "some_tag" }}
+   - Complete: End the search with a final set of item_ids
+     - name: "Complete"
+     - params: {{ "item_ids": ["id1", "id2", ...] }}
+
+You have the following context about your current state:
+{state_info}
+
+Remember: Return only valid JSON. Do NOT include extra keys.
+"""
+
+if __name__ == '__main__':
+  a = SINGLE_STEP_PROMPT.format(query='query', state_info='state info \n state info')
+  print(a)
