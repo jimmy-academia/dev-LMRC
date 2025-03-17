@@ -1,10 +1,24 @@
 import os
-import re
-import json
 import random
 import logging
-import argparse
-import math
+
+import openai
+
+from pathlib import Path
+
+user_struct = lambda x: {"role": "user", "content": x}
+system_struct = lambda x: {"role": "system", "content": x}
+assistant_struct = lambda x: {"role": "assistant", "content": x}
+
+def flatten_messages(messages):
+    flat = ''
+    for msg in messages:
+        flat += f"{msg['role']} => {msg['content']}\n"
+    return flat
+
+def readf(path):
+    with open(path, 'r') as f:
+        return f.read()
 
 def set_seeds(seed):
     random.seed(seed)
@@ -29,41 +43,27 @@ def set_verbose(verbose):
         handlers=[logging.StreamHandler()],
     )
 
-class NamespaceEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, argparse.Namespace):
-            return obj.__dict__
-        return super().default(obj)
+def ensure_dir(_dir):
+    """Ensure cache directory exists."""
+    Path(_dir).mkdir(exist_ok=True)
 
-def dumpj(dictionary, filepath):
-    with open(filepath, "w") as f:
-        obj = json.dumps(dictionary, indent=4, cls=NamespaceEncoder)
-        # optional cosmetic reformatting
-        obj = re.sub(r'("|\d+),\s+', r'\1, ', obj)
-        obj = re.sub(r'\[\n\s*("|\d+)', r'[\1', obj)
-        obj = re.sub(r'("|\d+)\n\s*\]', r'\1]', obj)
-        f.write(obj)
-
-def loadj(filepath):
-    with open(filepath) as f:
-        return json.load(f)
-
-def readf(path):
-    with open(path, 'r') as f:
-        return f.read()
-
-def compute_ndcg_at_50(ranked_items, ground_truth_id):
-    """
-    Compute NDCG@50 for a single query given:
-      - ranked_items: list of item_ids in predicted ranking order
-      - ground_truth_id: the correct relevant item_id
-    We treat only that item as relevant (1) and the rest as (0).
-    """
-    limit = 50
-    relevances = [1 if item_id == ground_truth_id else 0 for item_id in ranked_items[:limit]]
-    dcg = 0.0
-    for i, rel in enumerate(relevances, start=1):
-        dcg += (2**rel - 1) / math.log2(i + 1)
-    # If relevant item is in top-50, ideal DCG = 1.0 for a single relevant item.
-    idcg = 1.0 if ground_truth_id in ranked_items[:limit] else 0.0
-    return dcg / idcg if idcg > 0 else 0.0
+def create_llm_client(keypath=".openaikey", model="gpt-4o", temperature=0):
+    """Create a function to call the LLM."""
+    openai.api_key = readf(keypath).strip()
+    
+    def call_llm(messages, model=model, temperature=temperature, max_tokens=500):
+        """Call the LLM with a prompt and return the response."""
+        try:
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"Error calling LLM: {e}")
+            print(f"prompt messages: {messages}")
+            return "Error processing request."
+    
+    return call_llm

@@ -29,7 +29,6 @@ AVAILABLE_ACTIONS = """Available actions:
 - Complete(items): Finish the search and return the found items
 """
 
-
 REASONING_PROMPT = """Based on the current state and the user's query, think step-by-step about what action would be most appropriate next.
 Explain your reasoning in detail. Don't yet decide on a specific action - just analyze the situation and explain your thoughts.
 """
@@ -55,19 +54,17 @@ def get_state_info(state, fs_info, max_steps):
 Total items at this path: {fs_info['total_items']}
 Subcategories: {fs_info['subcategories']}
 Number of items not in subcategories: {len(fs_info['default_items'])}
-Step {state["step_count"] + 1} of {max_steps}
+Step {state["step_count"] + 1} of {max_steps}"""
+# {AVAILABLE_ACTIONS}
 
-{AVAILABLE_ACTIONS}
-"""
 
-# Define a new single-step prompt for Reasoning + Action in JSON format without triple backticks.
+# Define a new single-step prompt for Reasoning + Action in JSON format without triple backticks. : "{query}" 
 SINGLE_STEP_PROMPT = """
-You are an advanced ReAct agent. Your goal is to achieve the user's query: "{query}"
-by performing step-by-step reasoning and choosing from an available set of actions.
+You are an advanced ReAct agent. Your goal is to achieve the user's query by performing a single reasoning step and choosing from an available set of actions.
 
 Important: You must output valid JSON in the following format:
 {{
-  "reasoning": "<your hidden chain-of-thought reasoning here>",
+  "reasoning": "<your hidden reasoning here>",
   "action": {{
     "name": "<one of the available actions>",
     "params": {{
@@ -103,8 +100,7 @@ Important: You must output valid JSON in the following format:
 You have the following context about your current state:
 {state_info}
 
-Remember: Return only valid JSON. Do NOT include extra keys.
-"""
+Remember: Return only valid JSON. Do NOT include extra keys."""
 
 if __name__ == '__main__':
   a = SINGLE_STEP_PROMPT.format(query='query', state_info='state info \n state info')

@@ -2,7 +2,7 @@ import logging
 import json
 import re
 
-from utils import user_struct, system_struct, assistant_struct
+from utils import user_struct, system_struct, assistant_struct, flatten_messages
 from prompts import (
     SYSTEM_PROMPT,
     QUERY_PROMPT,
@@ -22,12 +22,14 @@ class ReactAgent:
         self.fs = file_system
         self.llm_client = llm_client
 
-    def search(self, query, max_steps=5):
+    def search(self, query, gt, gt_cat, max_steps=5):
         """
         Search for items matching the query using a multi-step reasoning process.
         Returns a dict with results and search information.
         """
         # Initialize search state
+        self.gt = gt
+        self.gt_cat = gt_cat
         state = {
             "query": query,
             "current_path": "/",
@@ -44,6 +46,7 @@ class ReactAgent:
         ]
 
         # Main ReAct loop
+        msg_pt = 0
         while not state["complete"] and state["step_count"] < max_steps:
             # 1) Get current file system information
             fs_info = self.fs.navigate_to(state["current_path"])
@@ -57,10 +60,13 @@ class ReactAgent:
             step_messages.append(user_struct(step_prompt))
 
             # 4) Single LLM call for reasoning + action
+            print(f"\n ======= STEP {state['step_count']+1} =======")
+            print(f"--- STEP {state['step_count']+1} RAW INPUT ---\n{flatten_messages(step_messages[msg_pt:])}")
+
             llm_output = self.llm_client(step_messages)
 
             # For debugging/logging, print out the raw LLM response:
-            print(f"\n--- STEP {state['step_count']+1} RAW OUTPUT ---\n{llm_output}\n")
+            print(f"--- STEP {state['step_count']+1} RAW OUTPUT ---\n{llm_output}\n")
 
             # 5) Parse the LLM's JSON output
             parsed_output = self._parse_llm_json_output(llm_output)
@@ -87,15 +93,19 @@ class ReactAgent:
             # 6) Execute the parsed action
             action_result = self._execute_action(action_name, action_params, state)
             step_record["result"] = action_result
+            
+            print(f"--- STEP {state['step_count']+1} STEP OPS ---\n{step_record}\n")
 
             # 7) Add the LLM’s output & result to the conversation context
             base_messages.append(assistant_struct(json.dumps(parsed_output)))
             base_messages.append(system_struct(action_result))
+            msg_pt = len(base_messages)
 
             # 8) Increment step
             state["step_count"] += 1
 
-            input(f'pause before step {state["step_count"]}')
+            input(f'pause before step {state["step_count"] + 1}')
+        input(f'pause before finish search.')
 
         # 9) Prepare final results
         return self._prepare_final_results(state)
@@ -110,11 +120,21 @@ class ReactAgent:
             "params": { ... }
           }
         }
+        This method removes Markdown code fences if present.
         Returns a dict or None if parsing fails.
         """
         try:
-            return json.loads(llm_text.strip())
-        except json.JSONDecodeError:
+            text = llm_text.strip()
+            # Remove Markdown code fences if present.
+            if text.startswith("```"):
+                # Remove the first line if it starts with ```
+                text = "\n".join(text.split("\n")[1:])
+                # Remove the last line if it ends with ```
+                if text.endswith("```"):
+                    text = "\n".join(text.split("\n")[:-1])
+            return json.loads(text.strip())
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON decode error: {e}")
             return None
 
     def _execute_action(self, action_name, params, state):
@@ -214,12 +234,19 @@ class ReactAgent:
 
     def _prepare_final_results(self, state):
         """Build the final result object after the search loop finishes."""
-        if state["complete"]:
+        if state["found_items"]:
             items = [self.fs.get_item_by_id(item_id) for item_id in state["found_items"]]
+
+            success = False
+            if self.gt in state["found_items"]:
+                success = True
+
             return {
-                "success": True,
+                "success": success,
                 "items": items,
                 "steps": state["steps"],
+                "final_path": state["current_path"],
+                "true category": self.gt_cat,
                 "summary": f"Found {len(state['found_items'])} items in {state['step_count']} steps."
             }
         else:
