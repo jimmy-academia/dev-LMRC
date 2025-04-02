@@ -3,7 +3,7 @@ import json
 import re
 
 from ..utils import user_struct, system_struct, assistant_struct, flatten_messages
-from ..prompts import (
+from _base_prompt import (
     SYSTEM_PROMPT,
     QUERY_PROMPT,
     SINGLE_STEP_PROMPT,

@@ -1,107 +1,143 @@
 """
-Contains prompts for the ReactAgent
+Contains prompts for the RecursiveAgent
 """
 
-SYSTEM_PROMPT = """You are a helpful search assistant that helps users find products based on their query.
-You have access to a file system of products organized by categories. You can:
-1. Navigate to different category paths
-2. Search for products using keywords
-3. Create new subcategories to organize products
-4. Tag products with relevant attributes
+# System prompt that establishes the role and overall task
+SYSTEM_PROMPT = """You are an advanced search system designed to efficiently navigate through hierarchical categories to find the most relevant products.
+Your task is to analyze categories, make strategic decisions about which paths to explore, and organize items based on relevance to the user's query.
 
-Follow these steps to find the most relevant products:
-1. Analyze the query to understand what the user is looking for
-2. Navigate to the most relevant category
-3. Use keyword search to find relevant products
-4. If needed, create subcategories to better organize products
-5. Return the most relevant products that match the query
+You should reason carefully about each decision, considering:
+1. Which categories are most likely to contain items matching the query
+2. When to create new categories to better organize items
+3. How to efficiently use resources, focusing on the most promising search paths
 
-You must use the available actions and think step by step.
+Think step-by-step and be decisive in your recommendations.
 """
 
-AVAILABLE_ACTIONS = """Available actions:
-- Navigate(path): Navigate to a specific category path
-- Search(keywords): Search for items containing any of these keywords
-- CreateSubcategory(name, item_ids): Create a new subcategory with the specified items
-- AddTag(item_ids, tag): Add a tag to the specified items
-- RemoveTag(item_ids, tag): Remove a tag from the specified items
-- GetByTag(tag): Get items with the specified tag
-- Complete(items): Finish the search and return the found items
-"""
+# Prompt for deciding whether to create a new subcategory, select an existing one, or pass
+DECIDE_CREATE_SELECT_PASS_PROMPT = """
+Based on the user's query: "{query}"
 
-REASONING_PROMPT = """Based on the current state and the user's query, think step-by-step about what action would be most appropriate next.
-Explain your reasoning in detail. Don't yet decide on a specific action - just analyze the situation and explain your thoughts.
-"""
+You need to decide the best action for the current path: {path}
 
-ACTION_SELECTION_PROMPT = f"""Based on your reasoning, choose ONE of the following actions to perform next:
+Available actions:
+1. SELECT - Choose one of the existing subcategories to explore next
+2. CREATE - Create a new subcategory from the direct items at this path
+3. PASS - Skip further exploration at this level as it's unlikely to contain relevant items
 
-{AVAILABLE_ACTIONS}
+Current state:
+- Direct items at this path: {direct_item_count} items
+- Available subcategories: {subcategories_info}
+- Relevance information: {relevance_info}
 
-Return ONLY the action in the exact format shown above, with no additional explanation.
-For example:
-- Navigate("/Electronics")
-- Search("air filter, dust")
-- CreateSubcategory("BestFilters", ["B001", "B002", "B003"])
-- Complete(["B001", "B002"])
-"""
-
-QUERY_PROMPT = "Find products matching this query: {query}"
-
-
-def get_state_info(state, fs_info, max_steps):
-    """Format the current state information for the agent."""
-    return f"""Current path: {state["current_path"]}
-Total items at this path: {fs_info['total_items']}
-Subcategories: {fs_info['subcategories']}
-Number of items not in subcategories: {len(fs_info['default_items'])}
-Step {state["step_count"] + 1} of {max_steps}"""
-# {AVAILABLE_ACTIONS}
-
-
-# Define a new single-step prompt for Reasoning + Action in JSON format without triple backticks. : "{query}" 
-SINGLE_STEP_PROMPT = """
-You are an advanced ReAct agent. Your goal is to achieve the user's query by performing a single reasoning step and choosing from an available set of actions.
-
-Important: You must output valid JSON in the following format:
+Analyze the situation and recommend ONE action (SELECT, CREATE, or PASS) with a brief explanation.
+Format your response as JSON:
 {{
-  "reasoning": "<your hidden reasoning here>",
-  "action": {{
-    "name": "<one of the available actions>",
-    "params": {{
-        // key-value pairs relevant to the action
-    }}
-  }}
+  "reasoning": "<your detailed reasoning process>",
+  "decision": "<SELECT|CREATE|PASS>"
 }}
+"""
 
-1. Reasoning: Think carefully about the next best step to find or organize items that match the query.
-2. Action: Choose exactly one from the available actions:
-   - Navigate: Move to a subdirectory/category
-     - name: "Navigate"
-     - params: {{ "path": "/some/path" }}
-   - Search: Search within the current path
-     - name: "Search"
-     - params: {{ "keywords": ["keyword1", "keyword2", ...] }}
-   - CreateSubcategory: Create a new subcategory with provided item IDs
-     - name: "CreateSubcategory"
-     - params: {{ "name": "subcategory_name", "item_ids": ["id1", "id2", ...] }}
-   - AddTag: Add a tag to specified items
-     - name: "AddTag"
-     - params: {{ "tag": "some_tag", "item_ids": ["id1", "id2", ...] }}
-   - RemoveTag: Remove a tag from specified items
-     - name: "RemoveTag"
-     - params: {{ "tag": "some_tag", "item_ids": ["id1", "id2", ...] }}
-   - GetByTag: Retrieve items with a given tag
-     - name: "GetByTag"
-     - params: {{ "tag": "some_tag" }}
-   - Complete: End the search with a final set of item_ids
-     - name: "Complete"
-     - params: {{ "item_ids": ["id1", "id2", ...] }}
+# Prompt for selecting the most relevant subcategory to explore next
+SELECT_SUBCATEGORY_PROMPT = """
+Based on the user's query: "{query}"
 
-You have the following context about your current state:
-{state_info}
+You need to select the most promising subcategory to explore from the current path: {path}
 
-Remember: Return only valid JSON. Do NOT include extra keys."""
+Available subcategories:
+{subcategories_detailed}
 
-if __name__ == '__main__':
-  a = SINGLE_STEP_PROMPT.format(query='query', state_info='state info \n state info')
-  print(a)
+Your task is to analyze each subcategory and determine which one is most likely to contain items relevant to the query.
+Consider:
+- How directly the subcategory name relates to the query terms
+- The number of items in each subcategory (more items may mean higher chance of relevance)
+- The specificity of the subcategory (more specific categories may be more accurate)
+
+Format your response as JSON:
+{{
+  "reasoning": "<your detailed analysis of each subcategory's relevance>",
+  "selected_subcategory": "<name of the most relevant subcategory>"
+}}
+"""
+
+# Prompt for creating a new subcategory from direct items
+CREATE_SUBCATEGORY_PROMPT = """
+Based on the user's query: "{query}"
+
+You need to create a new subcategory at the current path: {path}
+
+There are {direct_item_count} direct items at this path. Here are some sample items:
+{sample_items}
+
+Your task is to:
+1. Suggest an appropriate name for the new subcategory that relates to the query
+2. Identify which items should belong in this subcategory based on the query
+3. Explain your reasoning for this organization
+
+Format your response as JSON:
+{{
+  "reasoning": "<your detailed thought process>",
+  "subcategory_name": "<descriptive name for the new subcategory>",
+  "item_selection_criteria": "<criteria for selecting items for this subcategory>"
+}}
+"""
+
+# Helper function to format subcategory information
+def format_subcategories_info(subcategories):
+    """Format subcategories dict into a readable string."""
+    if not subcategories:
+        return "No subcategories available"
+    
+    info = []
+    for name, count in subcategories.items():
+        info.append(f"'{name}': {count} items")
+    
+    return ", ".join(info)
+
+# Helper function to format detailed subcategory information
+def format_subcategories_detailed(subcategories):
+    """Format subcategories with more detailed information for selection."""
+    if not subcategories:
+        return "No subcategories available"
+    
+    details = []
+    for name, count in subcategories.items():
+        details.append(f"- '{name}': Contains {count} items")
+    
+    return "\n".join(details)
+
+# Helper function to format sample items
+def format_sample_items(items, fs, max_samples=5):
+    """Format a sample of items with their metadata."""
+    if not items:
+        return "No items available"
+    
+    samples = []
+    for i, item_id in enumerate(list(items)[:max_samples]):
+        item = fs.get_item_by_id(item_id)
+        if item:
+            # Truncate metadata if it's too long
+            metadata = item.get('metadata', '')
+            if len(metadata) > 100:
+                metadata = metadata[:100] + "..."
+            samples.append(f"{i+1}. {metadata} (ID: {item_id})")
+    
+    return "\n".join(samples)
+
+# Helper function to get relevance information for the current path
+def get_relevance_info(query, path, fs):
+    """Get information about the relevance of the current path to the query."""
+    # This could be enhanced with more sophisticated relevance metrics
+    keywords = [kw.strip() for kw in query.split() if len(kw.strip()) > 3]
+    path_components = [p for p in path.split('/') if p]
+    
+    relevance = []
+    
+    # Check if path components match query keywords
+    matching_components = [p for p in path_components if any(kw.lower() in p.lower() for kw in keywords)]
+    if matching_components:
+        relevance.append(f"Path contains {len(matching_components)} components related to the query")
+    
+    # You could add additional relevance signals here
+    
+    return ", ".join(relevance) if relevance else "No direct relevance signals detected"

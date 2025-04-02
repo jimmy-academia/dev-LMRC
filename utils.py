@@ -67,3 +67,19 @@ def create_llm_client(keypath=".openaikey", model="gpt-4o", temperature=0):
             return "Error processing request."
     
     return call_llm
+
+def parse_llm_output(self, llm_text):
+        """Parse the LLM output as JSON."""
+        try:
+            text = llm_text.strip()
+            # Remove Markdown code fences if present
+            if text.startswith("```"):
+                # Remove the first line if it starts with ```
+                text = "\n".join(text.split("\n")[1:])
+                # Remove the last line if it ends with ```
+                if text.endswith("```"):
+                    text = "\n".join(text.split("\n")[:-1])
+            return json.loads(text.strip())
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON decode error: {e}")
+            return None
