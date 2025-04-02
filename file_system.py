@@ -5,26 +5,73 @@ from collections import defaultdict
 from tqdm import tqdm
 from pathlib import Path
 
+class Node:
+    """
+    Represents a node in the hierarchical file system.
+    Each node maintains information about its items and subcategories.
+    """
+    def __init__(self, name, parent=None):
+        self.name = name
+        self.items = set()  # Items directly at this node (not in subcategories)
+        self.subcategories = {}  # Maps subcategory name to Node object
+        self.total_item_count = 0  # Total items at this node and in all subcategories
+        self.parent = parent
+        
+    def add_item(self, item_id):
+        """Add an item directly to this node."""
+        self.items.add(item_id)
+        self.total_item_count += 1
+        self.parent.update_total_count(1)
+        
+    def remove_item(self, item_id):
+        """Remove an item from this node."""
+        if item_id in self.items:
+            self.items.remove(item_id)
+            self.total_item_count -= 1
+            self.parent.update_total_count(-1)
+            return True
+        return False
+    
+    def update_total_count(self, delta):
+        """Update the total item count for this node and propagate upward."""
+        self.total_item_count += delta
+        if self.parent is not None:
+            self.parent.update_total_count(delta)
+
+    def get_subcategory(self, name):
+        """Get a subcategory by name or create it if it doesn't exist."""
+        if name not in self.subcategories:
+            self.subcategories[name] = Node(name)
+        return self.subcategories[name]
+    
+    def get_subcategories_info(self):
+        """Get information about the subcategories."""
+        return {name: node.total_item_count for name, node in self.subcategories.items()}
+    
+    def __repr__(self):
+        return f"Node({self.name}, {len(self.items)} direct items, {self.total_item_count} total items, {len(self.subcategories)} subcategories)"
+
 class FileSystem:
     """
     A hierarchical file system for organizing and retrieving items.
-    Supports categorization, path navigation, keyword search, and tagging.
+    Uses a tree structure for efficient navigation and lookups.
     """
     
-    def __init__(self, item_pool=None):
+    def __init__(self, item_pool):
         """Initialize the file system with items from the item pool."""
-        self.item_pool = item_pool or []
+        self.item_pool = item_pool
         self.id_to_item = {}  # Maps item_id to item for O(1) lookup
-        self.paths = {}  # Maps item_id to its current path
-        self.path_to_items = defaultdict(set)  # Maps paths to sets of item_ids
+        self.id_to_paths = {}  # Maps item_id to its current path
         self.tags = defaultdict(set)  # Maps tags to sets of item_ids
         self.item_tags = defaultdict(set)  # Maps item_ids to their tags
         self.inverted_index = defaultdict(set)  # Word -> set of item_ids
         
+        # Create the root node
+        self.root = Node('root')
+        
         # Place items in their initial categories and build the index
-        if item_pool:
-            self._initialize_categories()
-            self._build_inverted_index()
+        self._initialize_categories()
+        self._build_inverted_index()
     
     def _initialize_categories(self):
         """Place items in their initial categories."""
@@ -38,8 +85,31 @@ class FileSystem:
             
             # Store the item's path
             path = f"/{category}"
-            self.paths[item_id] = path
-            self.path_to_items[path].add(item_id)
+            self.id_to_paths[item_id] = path
+            
+            # Add the item to the appropriate node
+            self._add_item_to_path(item_id, path)
+    
+    def _add_item_to_path(self, item_id, path):
+        """Add an item to a specific path in the hierarchy."""
+        if not path.startswith('/'):
+            path = f"/{path}"
+            
+        # Split the path into components
+        components = path.strip('/').split('/')
+        
+        # Start at the root
+        current = self.root
+        
+        # Navigate through the path, creating nodes as needed
+        for i, component in enumerate(components):
+            # For all components except the last, create subcategory nodes
+            if i < len(components) - 1:
+                current = current.get_subcategory(component)
+            else:
+                # For the last component, add the item directly
+                current_node = current.get_subcategory(component)
+                current_node.add_item(item_id)
     
     def _build_inverted_index(self):
         """Build an inverted index for faster keyword searches."""
@@ -88,6 +158,31 @@ class FileSystem:
             result['tags'] = list(self.item_tags[item_id])
             
         return result
+    
+    def _get_node_at_path(self, path):
+        """Get the node at a specific path."""
+        if not path.startswith('/'):
+            path = f"/{path}"
+            
+        # Root path is a special case
+        if path == '/':
+            return self.root
+            
+        # Split the path into components
+        components = path.strip('/').split('/')
+        
+        # Start at the root
+        current = self.root
+        
+        # Navigate through the path
+        for component in components:
+            if component in current.subcategories:
+                current = current.subcategories[component]
+            else:
+                # Path not found
+                return None
+                
+        return current
         
     def navigate_to(self, path):
         """
@@ -95,52 +190,22 @@ class FileSystem:
         Returns a dict with:
         - total_items: number of items at this path and subpaths
         - subcategories: dict mapping subcategory names to item counts
-        - default_items: items at this path not in a subcategory
+        - direct_items: items at this path not in a subcategory
         """
-        if not path.startswith('/'):
-            path = f"/{path}"
+        node = self._get_node_at_path(path)
+        
+        if not node:
+            # Path not found, return empty result
+            return {
+                'total_items': 0,
+                'subcategories': {},
+                'direct_items': set()
+            }
             
-        # Get items directly at this path
-        items_at_path = self.path_to_items.get(path, set())
-        
-        # Find all immediate subcategories and count items
-        subcategories = {}
-        
-        # Special case for root path: show all top-level categories
-        if path == '/':
-            for subpath, items in self.path_to_items.items():
-                # Only include paths with one component after root (e.g., /Electronics)
-                if subpath.count('/') == 1 and subpath != '/':
-                    # Extract category name from path
-                    category = subpath[1:]  # Remove leading /
-                    subcategories[category] = len(items)
-        else:
-            # Regular case: find immediate subcategories of the current path
-            prefix = path + '/' if path != '/' else '/'
-            for subpath, items in self.path_to_items.items():
-                # Check if this is an immediate subcategory of the current path
-                if subpath.startswith(prefix) and subpath.count('/') == path.count('/') + 1:
-                    subcat_name = subpath.split('/')[-1]
-                    subcategories[subcat_name] = len(items)
-        
-        # Get all items at this path and in subdirectories
-        all_items = set(items_at_path)
-        
-        # For non-root paths, include items from subdirectories
-        if path != '/':
-            prefix = path + '/'
-            for subpath, items in self.path_to_items.items():
-                if subpath.startswith(prefix):
-                    all_items.update(items)
-        else:
-            # For root path, include all items
-            for _, items in self.path_to_items.items():
-                all_items.update(items)
-        
         return {
-            'total_items': len(all_items),
-            'subcategories': subcategories,
-            'default_items': items_at_path
+            'total_items': node.total_item_count,
+            'subcategories': node.get_subcategories_info(),
+            'direct_items': node.items
         }
         
     def keyword_search(self, keywords, path=None):
@@ -193,25 +258,27 @@ class FileSystem:
         
         # If path is specified, filter results to only include items at or below that path
         if path:
-            if not path.startswith('/'):
-                path = f"/{path}"
+            node = self._get_node_at_path(path)
+            if not node:
+                return []
+                
+            # Get all items at this node and in its subcategories
+            path_items = self._get_all_items_under_node(node)
             
-            # Get all items at or below the path
-            path_items = set()
-            prefix = path + '/' if path != '/' else '/'
-            
-            # Include items directly at this path
-            if path in self.path_to_items:
-                path_items.update(self.path_to_items[path])
-            
-            # Include items in subpaths
-            for subpath, items in self.path_to_items.items():
-                if subpath.startswith(prefix):
-                    path_items.update(items)
-            
+            # Filter results to only include items at or below the path
             results = results.intersection(path_items)
         
         return list(results)
+    
+    def _get_all_items_under_node(self, node):
+        """Recursively get all items under a node."""
+        all_items = set(node.items)
+        
+        # Recursively get items from subcategories
+        for subcat_node in node.subcategories.values():
+            all_items.update(self._get_all_items_under_node(subcat_node))
+            
+        return all_items
     
     def create_subcategory(self, parent_path, subcategory_name, item_ids):
         """
@@ -226,19 +293,17 @@ class FileSystem:
             logging.warning(f"Cannot create subcategory under {parent_path}: maximum depth reached")
             return 0
         
+        # Get the parent node
+        parent_node = self._get_node_at_path(parent_path)
+        if not parent_node:
+            logging.warning(f"Parent path {parent_path} not found")
+            return 0
+            
         # Create the new path
-        new_path = f"{parent_path}/{subcategory_name}"
+        new_path = f"{parent_path}/{subcategory_name}" if parent_path != "/" else f"/{subcategory_name}"
         
-        # Get all items at or below the parent path
-        parent_items = set()
-        prefix = parent_path + '/' if parent_path != '/' else '/'
-        
-        if parent_path in self.path_to_items:
-            parent_items.update(self.path_to_items[parent_path])
-        
-        for subpath, items in self.path_to_items.items():
-            if subpath.startswith(prefix):
-                parent_items.update(items)
+        # Get all items under the parent node
+        parent_items = self._get_all_items_under_node(parent_node)
         
         # Ensure all items exist in the parent path or its subpaths
         valid_items = set(item_ids).intersection(parent_items)
@@ -247,21 +312,28 @@ class FileSystem:
             logging.warning(f"No valid items to move to {new_path}")
             return 0
         
+        # Create the subcategory node if it doesn't exist
+        if subcategory_name not in parent_node.subcategories:
+            parent_node.subcategories[subcategory_name] = Node(subcategory_name)
+        
+        # Get the subcategory node
+        subcat_node = parent_node.subcategories[subcategory_name]
+        
         # Move items to the new subcategory
         moved_count = 0
         for item_id in valid_items:
-            # Remove from old path
+            # Get the old path and node
             old_path = self.paths[item_id]
-            self.path_to_items[old_path].remove(item_id)
+            old_node = self._get_node_at_path(old_path)
             
-            # Update the item's path
-            self.paths[item_id] = new_path
-            self.path_to_items[new_path].add(item_id)
-            moved_count += 1
-            
-            # Clean up empty paths
-            if not self.path_to_items[old_path]:
-                del self.path_to_items[old_path]
+            # Remove from old node
+            if old_node and old_node.remove_item(item_id):
+                # Update the item's path
+                self.paths[item_id] = new_path
+                
+                # Add to new subcategory
+                subcat_node.add_item(item_id)
+                moved_count += 1
         
         logging.info(f"Created subcategory {new_path} with {moved_count} items")
         return moved_count
@@ -283,20 +355,14 @@ class FileSystem:
         items = self.tags.get(tag, set())
         
         if path:
-            if not path.startswith('/'):
-                path = f"/{path}"
+            node = self._get_node_at_path(path)
+            if not node:
+                return []
+                
+            # Get all items at this node and in its subcategories
+            path_items = self._get_all_items_under_node(node)
             
-            # Get all items at or below the path
-            path_items = set()
-            prefix = path + '/' if path != '/' else '/'
-            
-            if path in self.path_to_items:
-                path_items.update(self.path_to_items[path])
-            
-            for subpath, items_at_subpath in self.path_to_items.items():
-                if subpath.startswith(prefix):
-                    path_items.update(items_at_subpath)
-            
+            # Filter items to only include those at or below the path
             items = items.intersection(path_items)
         
         return list(items)
@@ -307,11 +373,11 @@ class FileSystem:
         
         # Get all top-level categories and their item counts
         categories = []
-        for path, items in sorted(self.path_to_items.items()):
-            # Only look at top-level categories (paths with one component after root)
-            if path.count('/') == 1:
-                category = path[1:]  # Remove leading /
-                categories.append((category, len(items)))
+        for name, node in self.root.subcategories.items():
+            categories.append((name, node.total_item_count))
+        
+        # Sort by category name
+        categories.sort()
         
         # Print three categories per row
         for i in range(0, len(categories), 3):
@@ -354,5 +420,3 @@ class FileSystem:
         with open(path, 'wb') as f:
             pickle.dump(self, f)
         logging.info(f"File system saved to {path}")
-
-# This function will be implemented in data.py
