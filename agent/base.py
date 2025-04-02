@@ -2,8 +2,8 @@ import logging
 import json
 import re
 
-from utils import user_struct, system_struct, assistant_struct, flatten_messages
-from prompts import (
+from ..utils import user_struct, system_struct, assistant_struct, flatten_messages
+from ..prompts import (
     SYSTEM_PROMPT,
     QUERY_PROMPT,
     SINGLE_STEP_PROMPT,
