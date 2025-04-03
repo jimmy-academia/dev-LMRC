@@ -18,7 +18,7 @@ def main():
     parser.add_argument('--seed', type=int, default=1, help='Random seed')
     parser.add_argument('--verbose', type=int, default=1, choices=[0, 1, 2], 
                       help='Verbosity level (0=minimal, 1=info, 2=debug)')
-    parser.add_argument('--steps', type=int, default=5, help='Maximum steps per query')
+    # parser.add_argument('--steps', type=int, default=5, help='Maximum steps per query')
     parser.add_argument('--output', type=str, default='output', help='Output directory')
     args = parser.parse_args()
     

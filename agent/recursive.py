@@ -60,9 +60,7 @@ class RecursiveAgent:
             logging.info(f"Max depth reached at {path}, stopping recursion")
             return
 
-        self.step_count += 1
-        logging.info(f"Step {self.step_count}: Exploring path {path} at depth {depth}")
-        input('ready to take the step?')
+        input('ready to take next step?')
 
         # Get information about the current node
         fs_info = self.fs.navigate_to(path)
@@ -76,17 +74,29 @@ class RecursiveAgent:
                 decision = None
                 if len(direct_items) > 0:
                     decision = self.decide_create_select_pass(subcategories, direct_items)
-
-                if subcategories and (decision=='select' or not direct_items):
-                    selected_subcat = self.select_subcategory(path, subcategories)
-                    subcategories.pop(selected_subcat)
-                    next_path = f"{path}/{selected_subcat}" if path != "/" else f"/{selected_subcat}"
-                elif direct_items and decision == 'create':
-                    next_path, direct_items = self.create_subcategory(path, direct_items)
+                elif subcategories: 
+                    decision = 'select'
                 else:
                     # it does not seem good to select or create from this level
                     break
 
+                self.step_count += 1
+
+                if decision=='select':
+                    selected_subcat = self.select_subcategory(path, subcategories)
+                    subcategories.pop(selected_subcat)
+                    next_path = f"{path}/{selected_subcat}" if path != "/" else f"/{selected_subcat}"
+                    logging.info(f"Step {self.step_count}: Select {next_path} from {subcategories}")
+
+                elif decision == 'create':
+                    next_path, direct_items = self.create_subcategory(path, direct_items)
+                    logging.info(f"Step {self.step_count}: Create {next_path}")
+
+                elif decision == 'pass':
+                    logging.info(f"Step {self.step_count}: Decide to pass")
+
+                    break
+                    
                 self._recursive_search(next_path, depth + 1)
 
         else:

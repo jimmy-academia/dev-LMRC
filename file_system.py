@@ -16,19 +16,24 @@ class Node:
         self.subcategories = {}  # Maps subcategory name to Node object
         self.total_item_count = 0  # Total items at this node and in all subcategories
         self.parent = parent
-        
+    
+    def _update_parent_count(self, delta):
+        if self.parent is not None: 
+            self.parent.update_total_count(delta)
+
+
     def add_item(self, item_id):
         """Add an item directly to this node."""
         self.items.add(item_id)
         self.total_item_count += 1
-        self.parent.update_total_count(1)
+        self._update_parent_count(1)
         
     def remove_item(self, item_id):
         """Remove an item from this node."""
         if item_id in self.items:
             self.items.remove(item_id)
             self.total_item_count -= 1
-            self.parent.update_total_count(-1)
+            self._update_parent_count(-1)
             return True
         return False
     
@@ -36,7 +41,7 @@ class Node:
         """Update the total item count for this node and propagate upward."""
         self.total_item_count += delta
         if self.parent is not None:
-            self.parent.update_total_count(delta)
+            self._update_parent_count(delta)
 
     def get_subcategory(self, name):
         """Get a subcategory by name or create it if it doesn't exist."""
