@@ -5,9 +5,9 @@
 
 ## log
 
-- [2025-4-3]
 
-test run;
+- [2025-4-7] <init> indexing batch...
+- [2025-4-3] test run;
 
 - [2025-4-2] 
 

@@ -1,52 +1,48 @@
 import re
+import os
+import gc
 import pickle
 import logging
 from collections import defaultdict
-from tqdm import tqdm
 from pathlib import Path
+from tqdm import tqdm
 
 class Node:
     """
-    Represents a node in the hierarchical file system.
+    Memory-optimized Node implementation for the hierarchical file system.
     Each node maintains information about its items and subcategories.
     """
     def __init__(self, name, parent=None):
         self.name = name
-        self.items = set()  # Items directly at this node (not in subcategories)
+        self.items = set()  # Only store item IDs
         self.subcategories = {}  # Maps subcategory name to Node object
         self.total_item_count = 0  # Total items at this node and in all subcategories
-        self.parent = parent
+        self.parent = parent  # Store reference to parent for upward propagation
     
-    def _update_parent_count(self, delta):
-        if self.parent is not None: 
-            self.parent.update_total_count(delta)
-
-
     def add_item(self, item_id):
         """Add an item directly to this node."""
         self.items.add(item_id)
-        self.total_item_count += 1
-        self._update_parent_count(1)
+        self._update_counts(1)
         
     def remove_item(self, item_id):
         """Remove an item from this node."""
         if item_id in self.items:
             self.items.remove(item_id)
-            self.total_item_count -= 1
-            self._update_parent_count(-1)
+            self._update_counts(-1)
             return True
         return False
     
-    def update_total_count(self, delta):
-        """Update the total item count for this node and propagate upward."""
-        self.total_item_count += delta
-        if self.parent is not None:
-            self._update_parent_count(delta)
-
+    def _update_counts(self, delta):
+        """Update counts efficiently without deep recursion."""
+        node = self
+        while node:
+            node.total_item_count += delta
+            node = node.parent
+    
     def get_subcategory(self, name):
         """Get a subcategory by name or create it if it doesn't exist."""
         if name not in self.subcategories:
-            self.subcategories[name] = Node(name)
+            self.subcategories[name] = Node(name, self)
         return self.subcategories[name]
     
     def get_subcategories_info(self):
@@ -62,38 +58,189 @@ class FileSystem:
     Uses a tree structure for efficient navigation and lookups.
     """
     
-    def __init__(self, item_pool):
+    def __init__(self, item_pool, cache_dir="cache", batch_size=5000):
         """Initialize the file system with items from the item pool."""
         self.item_pool = item_pool
+        self.cache_dir = cache_dir
+        self.batch_size = batch_size
+        
+        # Ensure cache directory exists
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # Initialize data structures
         self.id_to_item = {}  # Maps item_id to item for O(1) lookup
-        self.id_to_paths = {}  # Maps item_id to its current path
+        self.paths = {}       # Maps item_id to its current path
         self.tags = defaultdict(set)  # Maps tags to sets of item_ids
         self.item_tags = defaultdict(set)  # Maps item_ids to their tags
-        self.inverted_index = defaultdict(set)  # Word -> set of item_ids
+        self.inverted_index = None  # Will be loaded or built
         
         # Create the root node
         self.root = Node('root')
         
-        # Place items in their initial categories and build the index
+        # Place items in their initial categories
         self._initialize_categories()
-        self._build_inverted_index()
+        
+        # Build or load the inverted index
+        self._load_or_build_inverted_index()
     
     def _initialize_categories(self):
-        """Place items in their initial categories."""
+        """Place items in their initial categories in batches."""
         logging.info("Initializing categories...")
-        for idx, item in enumerate(tqdm(self.item_pool, desc="Organizing items", ncols=88)):
-            item_id = item.get('item_id')
-            category = item.get('category', 'Uncategorized')
+        item_map_file = os.path.join(self.cache_dir, "item_map.pkl")
+        node_file = os.path.join(self.cache_dir, "node_tree.pkl")
+        paths_file = os.path.join(self.cache_dir, "paths.pkl")
+        
+        # Check if we can load a cached tree structure
+        if os.path.exists(node_file):
+            logging.info("Loading tree structure from cache...")
+            with open(node_file, 'rb') as f:
+                self.root = pickle.load(f)
+            with open(item_map_file, 'rb') as f:
+                self.id_to_item = pickle.load(f)
+            with open(paths_file, 'rb') as f:
+                self.paths = pickle.load(f)
+            return
+        
+        # Process items in batches
+        total_items = len(self.item_pool)
+        for i in range(0, total_items, self.batch_size):
+            batch_end = min(i + self.batch_size, total_items)
+            batch = self.item_pool[i:batch_end]
             
-            # Store the item for O(1) lookup
-            self.id_to_item[item_id] = item
+            for item in tqdm(batch, desc=f"Organizing items {i+1}-{batch_end}", ncols=88):
+                item_id = item.get('item_id')
+                category = item.get('category', 'Uncategorized')
+                
+                # Store the item for O(1) lookup
+                self.id_to_item[item_id] = item
+                
+                # Store the item's path
+                path = f"/{category}"
+                self.paths[item_id] = path
+                
+                # Add the item to the appropriate node
+                self._add_item_to_path(item_id, path)
             
-            # Store the item's path
-            path = f"/{category}"
-            self.id_to_paths[item_id] = path
+            # Save intermediate progress
+            if i % (self.batch_size * 5) == 0 or batch_end == total_items:
+                with open(item_map_file, 'wb') as f:
+                    pickle.dump(self.id_to_item, f)
+                with open(paths_file, 'wb') as f:
+                    pickle.dump(self.paths, f)
+                with open(node_file, 'wb') as f:
+                    pickle.dump(self.root, f)
             
-            # Add the item to the appropriate node
-            self._add_item_to_path(item_id, path)
+            # Force garbage collection after each batch
+            gc.collect()
+        
+        # Final save
+        with open(item_map_file, 'wb') as f:
+            pickle.dump(self.id_to_item, f)
+        with open(paths_file, 'wb') as f:
+            pickle.dump(self.paths, f)
+        with open(node_file, 'wb') as f:
+            pickle.dump(self.root, f)
+            
+    def _load_or_build_inverted_index(self):
+        """Load the inverted index from cache or build it."""
+        index_file = os.path.join(self.cache_dir, "inverted_index.pkl")
+        
+        if os.path.exists(index_file):
+            logging.info(f"Loading inverted index from {index_file}")
+            with open(index_file, 'rb') as f:
+                self.inverted_index = pickle.load(f)
+        else:
+            logging.info("Building inverted index (this may take a while)...")
+            self.inverted_index = self._build_inverted_index()
+            
+            # Save the index
+            with open(index_file, 'wb') as f:
+                pickle.dump(self.inverted_index, f)
+    
+    def _build_inverted_index(self):
+        """Build an inverted index for faster keyword searches."""
+        inverted_index = defaultdict(set)
+        temp_indices_dir = os.path.join(self.cache_dir, "temp_indices")
+        os.makedirs(temp_indices_dir, exist_ok=True)
+        
+        # Track progress for resuming if needed
+        progress_file = os.path.join(temp_indices_dir, "index_progress.pkl")
+        if os.path.exists(progress_file):
+            with open(progress_file, 'rb') as f:
+                processed_items = pickle.load(f)
+            logging.info(f"Resuming indexing. Already processed {len(processed_items)} items")
+        else:
+            processed_items = set()
+        
+        # Process items in smaller batches to manage memory
+        total_items = len(self.item_pool)
+        batch_size = min(self.batch_size, 1000)  # Smaller batch size for indexing
+        
+        for start_idx in range(0, total_items, batch_size):
+            end_idx = min(start_idx + batch_size, total_items)
+            batch_id = f"batch_{start_idx}_{end_idx}"
+            batch_file = os.path.join(temp_indices_dir, f"{batch_id}.pkl")
+            
+            # Skip if already processed
+            if batch_id in processed_items:
+                continue
+                
+            # Create a temporary index for this batch
+            batch_index = defaultdict(set)
+            
+            for i in tqdm(range(start_idx, end_idx), desc=f"Indexing batch {start_idx+1}-{end_idx}", ncols=88):
+                if i >= total_items:
+                    break
+                    
+                item = self.item_pool[i]
+                item_id = item.get('item_id')
+                metadata = item.get('metadata', '')
+                
+                # Skip if no metadata
+                if not metadata:
+                    continue
+                    
+                # Process metadata text to lowercase
+                metadata_lower = metadata.lower()
+                
+                # Index individual words
+                for token in set(re.findall(r'\b\w+\b', metadata_lower)):
+                    if len(token) >= 3:  # Skip very short words
+                        batch_index[token].add(item_id)
+                
+                # Create bigrams (pairs of words) - only for shorter texts
+                words = re.findall(r'\b\w+\b', metadata_lower)
+                if len(words) >= 2 and len(words) <= 100:  # Skip very long texts
+                    for i in range(len(words) - 1):
+                        if len(words[i]) >= 3 and len(words[i+1]) >= 3:
+                            bigram = f"{words[i]} {words[i+1]}"
+                            batch_index[bigram].add(item_id)
+            
+            # Save the batch index
+            with open(batch_file, 'wb') as f:
+                pickle.dump(batch_index, f)
+            
+            # Update processed items
+            processed_items.add(batch_id)
+            with open(progress_file, 'wb') as f:
+                pickle.dump(processed_items, f)
+            
+            # Merge into main index
+            for token, ids in batch_index.items():
+                inverted_index[token].update(ids)
+            
+            # Clean up batch memory
+            del batch_index
+            gc.collect()
+        
+        # Clean up temporary files
+        for filename in os.listdir(temp_indices_dir):
+            if filename.startswith("batch_"):
+                os.remove(os.path.join(temp_indices_dir, filename))
+        os.remove(progress_file)
+        os.rmdir(temp_indices_dir)
+        
+        return inverted_index
     
     def _add_item_to_path(self, item_id, path):
         """Add an item to a specific path in the hierarchy."""
@@ -116,40 +263,8 @@ class FileSystem:
                 current_node = current.get_subcategory(component)
                 current_node.add_item(item_id)
     
-    def _build_inverted_index(self):
-        """Build an inverted index for faster keyword searches."""
-        logging.info("Building inverted index...")
-        for idx, item in enumerate(tqdm(self.item_pool, desc="Indexing items", ncols=88)):
-            # Get metadata text; default to empty string if missing
-            metadata = item.get('metadata', '')
-            item_id = item.get('item_id')
-            
-            # Process metadata text to lowercase
-            metadata_lower = metadata.lower()
-            
-            # Tokenize: extract words and convert to lowercase
-            # Store both individual words and pairs of adjacent words
-            tokens = set(re.findall(r'\b\w+\b', metadata_lower))
-            
-            # Index individual words
-            for token in tokens:
-                self.inverted_index[token].add(item_id)
-                
-            # Additionally, index pairs of words (for common phrases)
-            words = re.findall(r'\b\w+\b', metadata_lower)
-            if len(words) >= 2:
-                for i in range(len(words) - 1):
-                    bigram = f"{words[i]} {words[i+1]}"
-                    self.inverted_index[bigram].add(item_id)
-                    
-            # Also index trigrams for common phrases of 3 words
-            if len(words) >= 3:
-                for i in range(len(words) - 2):
-                    trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
-                    self.inverted_index[trigram].add(item_id)
-    
     def get_item_by_id(self, item_id):
-        """Get an item by its ID - O(1) operation."""
+        """Get an item by its ID."""
         if item_id not in self.id_to_item:
             return None
             
@@ -195,7 +310,7 @@ class FileSystem:
         Returns a dict with:
         - total_items: number of items at this path and subpaths
         - subcategories: dict mapping subcategory names to item counts
-        - direct_items: items at this path not in a subcategory
+        - default_items: items at this path not in a subcategory
         """
         node = self._get_node_at_path(path)
         
@@ -204,23 +319,19 @@ class FileSystem:
             return {
                 'total_items': 0,
                 'subcategories': {},
-                'direct_items': set()
+                'default_items': set()
             }
             
         return {
             'total_items': node.total_item_count,
             'subcategories': node.get_subcategories_info(),
-            'direct_items': node.items
+            'default_items': node.items
         }
         
     def keyword_search(self, keywords, path=None):
         """
         Search for items containing ANY of the keywords within the given path.
         If path is None, search all items.
-        Returns a list of item_ids.
-        
-        Keywords can be either a single string or a list of keywords.
-        If a single string is provided, it will be split by commas.
         """
         # Handle input as either a string or a list
         if isinstance(keywords, str):
@@ -249,11 +360,18 @@ class FileSystem:
                 words = keyword.lower().split()
                 keyword_matches = set()
                 
-                for item_id, item in self.id_to_item.items():
-                    metadata = item.get('metadata', '').lower()
-                    # Check if ALL words from the keyword phrase appear in the metadata
-                    if all(word in metadata for word in words):
-                        keyword_matches.add(item_id)
+                # Check if the exact phrase is in the index first
+                if keyword.lower() in self.inverted_index:
+                    keyword_matches = self.inverted_index[keyword.lower()].copy()
+                else:
+                    # Fall back to searching for items containing all words
+                    word_matches = [self.inverted_index.get(word, set()) for word in words]
+                    if word_matches:
+                        # Start with all items matching the first word
+                        keyword_matches = word_matches[0].copy()
+                        # Then intersect with items matching subsequent words
+                        for matches in word_matches[1:]:
+                            keyword_matches.intersection_update(matches)
             else:
                 # For single words, use the inverted index
                 keyword_matches = self.inverted_index.get(keyword.lower(), set())
@@ -319,26 +437,35 @@ class FileSystem:
         
         # Create the subcategory node if it doesn't exist
         if subcategory_name not in parent_node.subcategories:
-            parent_node.subcategories[subcategory_name] = Node(subcategory_name)
+            parent_node.subcategories[subcategory_name] = Node(subcategory_name, parent_node)
         
         # Get the subcategory node
         subcat_node = parent_node.subcategories[subcategory_name]
         
-        # Move items to the new subcategory
+        # Process items in smaller batches to prevent memory issues
+        batch_size = 1000
+        all_valid_items = list(valid_items)
         moved_count = 0
-        for item_id in valid_items:
-            # Get the old path and node
-            old_path = self.paths[item_id]
-            old_node = self._get_node_at_path(old_path)
+        
+        for i in range(0, len(all_valid_items), batch_size):
+            batch = all_valid_items[i:i+batch_size]
             
-            # Remove from old node
-            if old_node and old_node.remove_item(item_id):
-                # Update the item's path
-                self.paths[item_id] = new_path
+            for item_id in batch:
+                # Get the old path and node
+                old_path = self.paths[item_id]
+                old_node = self._get_node_at_path(old_path)
                 
-                # Add to new subcategory
-                subcat_node.add_item(item_id)
-                moved_count += 1
+                # Remove from old node
+                if old_node and old_node.remove_item(item_id):
+                    # Update the item's path
+                    self.paths[item_id] = new_path
+                    
+                    # Add to new subcategory
+                    subcat_node.add_item(item_id)
+                    moved_count += 1
+            
+            # Force garbage collection after each batch
+            gc.collect()
         
         logging.info(f"Created subcategory {new_path} with {moved_count} items")
         return moved_count
@@ -346,10 +473,15 @@ class FileSystem:
     def add_tag(self, item_ids, tag):
         """Add a tag to specified items."""
         tag = tag.lower()
+        tagged_count = 0
+        
         for item_id in item_ids:
-            self.item_tags[item_id].add(tag)
-            self.tags[tag].add(item_id)
-        return len(item_ids)
+            if item_id in self.id_to_item:  # Only tag items that exist
+                self.item_tags[item_id].add(tag)
+                self.tags[tag].add(item_id)
+                tagged_count += 1
+                
+        return tagged_count
     
     def get_items_by_tag(self, tag, path=None):
         """
@@ -401,7 +533,7 @@ class FileSystem:
         
         for item_id in item_ids:
             # Check if the item has this tag
-            if tag in self.item_tags[item_id]:
+            if tag in self.item_tags.get(item_id, set()):
                 # Remove from item_tags
                 self.item_tags[item_id].remove(tag)
                 
@@ -421,7 +553,53 @@ class FileSystem:
         return removed_count
     
     def save(self, path):
-        """Save the file system to a pickle file."""
+        """
+        Save the file system to a pickle file, directly storing the node structure.
+        This approach prioritizes operational efficiency over storage size.
+        """
+        logging.info(f"Saving file system to {path}...")
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(str(path))), exist_ok=True)
+        
+        # Save the complete file system object
+        # Note: This includes the root node structure with all subcategories
         with open(path, 'wb') as f:
             pickle.dump(self, f)
+        
         logging.info(f"File system saved to {path}")
+    
+    @classmethod
+    def load(cls, path, item_pool):
+        """
+        Load a file system from a pickle file, directly restoring the node structure.
+        
+        Args:
+            path: Path to the pickle file
+            item_pool: Original item pool (kept for backward compatibility)
+            
+        Returns:
+            A FileSystem instance with the complete tree structure
+        """
+        logging.info(f"Loading file system from {path}")
+        
+        # Check if the file exists
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"File system file not found: {path}")
+        
+        try:
+            # Directly load the entire FileSystem object
+            with open(path, 'rb') as f:
+                fs = pickle.load(f)
+            
+            # If needed, update the item_pool reference (usually not necessary)
+            if hasattr(fs, 'item_pool') and fs.item_pool is not item_pool:
+                fs.item_pool = item_pool
+            
+            logging.info(f"File system loaded from {path}")
+            return fs
+        except Exception as e:
+            logging.error(f"Error loading file system: {e}")
+            # If direct loading fails, try to create a new file system
+            logging.info("Creating new file system as fallback")
+            return cls(item_pool)
