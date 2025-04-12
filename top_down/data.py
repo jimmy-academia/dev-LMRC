@@ -101,7 +101,6 @@ def prepare_file_system(fs_pkl, item_pool):
     from file_system import FileSystem
     
     if fs_pkl.exists():
-        logging.info(f"Loading file system from {fs_pkl}")
         try:
             fs = FileSystem.load(fs_pkl, item_pool)
             return fs

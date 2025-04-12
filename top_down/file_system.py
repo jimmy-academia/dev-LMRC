@@ -581,8 +581,6 @@ class FileSystem:
         Returns:
             A FileSystem instance with the complete tree structure
         """
-        logging.info(f"Loading file system from {path}")
-        
         # Check if the file exists
         if not os.path.exists(path):
             raise FileNotFoundError(f"File system file not found: {path}")

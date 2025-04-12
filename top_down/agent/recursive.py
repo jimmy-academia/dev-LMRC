@@ -5,7 +5,7 @@ import gc
 from collections import defaultdict
 
 from utils import user_struct, system_struct, assistant_struct, flatten_messages
-from prompts import (
+from .prompts import (
     SYSTEM_PROMPT,
     DECIDE_CREATE_SELECT_PASS_PROMPT,
     SELECT_SUBCATEGORY_PROMPT,
@@ -100,6 +100,9 @@ class RecursiveAgent:
         }
         self.steps.append(step_info)
         
+        print(self.steps)
+        input('pause')
+        
         # Decision logic: should we create, select, or pass?
         decision = "pass"
         if direct_items and len(direct_items) > self.min_items_for_subdivision:
@@ -130,6 +133,7 @@ class RecursiveAgent:
         elif decision == "select" and subcategories:
             # Select the most promising subcategory
             selected_subcat = self._select_subcategory(path, subcategories)
+            subcategories.pop(selected_subcat)
             step_info["action"] = "select"
             step_info["selected"] = selected_subcat
             
@@ -143,7 +147,6 @@ class RecursiveAgent:
             if remaining_steps > 2 and len(subcategories) > 1:
                 # Remove the selected subcategory before selecting the next one
 
-                input("Remove the selected subcategory before selecting the next one")
                 subcats_copy = subcategories.copy()
                 if selected_subcat in subcats_copy:
                     del subcats_copy[selected_subcat]
