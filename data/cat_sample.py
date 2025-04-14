@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 import gc
 
-from debug import *
-
 def sample_items_by_category(data_pkl='cache/queries_item_pool.pkl', 
                              output_dir='cache/category_samples',
                              category='Food',

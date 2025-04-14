@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 import gc
 
-from debug import *
-
 def create_small_sample(data_pkl='cache/queries_item_pool.pkl', output_pkl='cache/sample_query_item.pkl', sample_ratio=0.001):
     """
     Read data from the previously created pickle files and create a smaller subset.
