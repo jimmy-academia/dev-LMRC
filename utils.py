@@ -1,4 +1,5 @@
 import os
+import json
 import random
 import logging
 
@@ -10,16 +11,6 @@ from pathlib import Path
 user_struct = lambda x: {"role": "user", "content": x}
 system_struct = lambda x: {"role": "system", "content": x}
 assistant_struct = lambda x: {"role": "assistant", "content": x}
-
-def flatten_messages(messages):
-    flat = ''
-    for msg in messages:
-        flat += f"{msg['role']} => {msg['content']}\n"
-    return flat
-
-def readf(path):
-    with open(path, 'r') as f:
-        return f.read()
 
 def set_seeds(seed):
     random.seed(seed)
@@ -43,6 +34,31 @@ def set_verbose(verbose):
         datefmt='%H:%M:%S',
         handlers=[logging.StreamHandler()],
     )
+
+# ====
+
+def readf(path):
+    with open(path, 'r') as f:
+        return f.read()
+
+class NamespaceEncoder(json.JSONEncoder):
+  def default(self, obj):
+    if isinstance(obj, argparse.Namespace):
+      return obj.__dict__
+    else:
+      return super().default(obj)
+
+def dumpj(dictionary, filepath):
+    with open(filepath, "w") as f:
+        obj = json.dumps(dictionary, indent=4, cls=NamespaceEncoder)
+        obj = re.sub(r'("|\d+),\s+', r'\1, ', obj)
+        obj = re.sub(r'\[\n\s*("|\d+)', r'[\1', obj)
+        obj = re.sub(r'("|\d+)\n\s*\]', r'\1]', obj)
+        f.write(obj)
+
+def loadj(filepath):
+    with open(filepath) as f:
+        return json.load(f)
 
 def ensure_dir(_dir):
     """Ensure cache directory exists."""
