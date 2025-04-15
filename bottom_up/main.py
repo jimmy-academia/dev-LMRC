@@ -73,8 +73,8 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm):
         current_level["item_ids"].append(item_id)
 
         print(f"Added item {item_id} to path: {path}")
-
-    dumpj(file_tree, file_tree_path)
+        dumpj(file_tree, file_tree_path)
+        
     return file_tree
     
 def create_prompt_dict(file_tree):
@@ -202,17 +202,20 @@ def main():
         path = result["Path"]
         actual_path = find_item_path(request["item_id"], file_tree)
         is_correct = False
+        print('==== ====')
+        print(f"Request query: {request['query']}")
         if actual_path:
             path_components = path.strip('/').split('/')[:-1]  # Remove item_id
             actual_components = actual_path.strip('/').split('/')[:-1]
             is_correct = path_components == actual_components
             
             if is_correct:
-                correct_count += 1
                 print("✓ Correct path")
+                print(f">> The path: {path}")
             else:
                 distance = calculate_path_distance(path, actual_path)
-                print(f"✗ Incorrect. Actual: {actual_path}, Distance: {distance}")
+                print(f"✗ Incorrect.")
+                print(f">> Predicted Path: {path}\n>> Actual path: {actual_path}\n === Distance: {distance} ===")
         else:
             print("? Item not found in tree")
         
