@@ -10,6 +10,8 @@ sys_expert = "You are an expert in categorizing items into a hiearchical file pa
 cat_prompt = """Start with root, and use category as the first path. 
 
 - In level names, replace space with underscores.
+- You must use all three levels
+- Device the most generic names for each level subcategory; ensure that the 2nd and 3rd level subcategories are inclusive to other items; Do not use special brand names as subcategory.
 - Use the existing directory if possible, or branch off any level if the category should be different.
 
 Existing directory:

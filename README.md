@@ -6,6 +6,7 @@
 ## log
 
 
+- [2025-4-16] New sample method, save to `improve` branch
 - [2025-4-15] Bottom-up is completed; to work on improvements
     (improve branch =>> todo: work on improvement!!)
 - [2025-4-11] The goal is to finish two implementations and get some results!
