@@ -7,6 +7,8 @@ from utils import set_verbose, create_llm_client
 from utils import loadj, dumpj
 from utils import system_struct, user_struct
 
+from helper import create_prompt_dict
+from prompt import sys_expert, cat_prompt
 
 def prepare_file_tree(item_pool, file_tree_path, call_llm):
 
