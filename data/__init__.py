@@ -3,6 +3,8 @@ from .req_cat_sample import sample_items_and_requests_by_category, load_category
 from .cat_sample import sample_items_by_category, load_category_items
 from .sample import create_small_sample, load_sampled_data
 
+from .mid_sample import create_10k_sample, load_subsample
+
 # Export the main functions
 __all__ = [
     'sample_items_and_requests_by_category', 
@@ -10,5 +12,7 @@ __all__ = [
     'sample_items_by_category', 
     'load_category_items',
     'create_small_sample', 
-    'load_sampled_data'
+    'load_sampled_data',
+    'create_10k_sample',
+    'load_subsample'
 ]
