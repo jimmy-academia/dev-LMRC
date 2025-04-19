@@ -5,7 +5,7 @@
 
 ## log
 
-- [2025-4-18] Continue to work; mid-sample done; => 1,000 items full run
+- [2025-4-18] Continue to work; mid-sample done; => 200 items run; next thing todo: tree management!!!
 - [2025-4-16] New sample method, save to `improve` branch
 - [2025-4-15] Bottom-up is completed; to work on improvements
     (improve branch =>> todo: work on improvement!!)

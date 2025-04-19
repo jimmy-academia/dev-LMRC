@@ -1,4 +1,4 @@
-sys_expert = "You are an expert in categorizing items into a hiearchical file path."
+sys_expert = "You are expert in consumer products, able to categorize items, understand request into a hiearchical file path."
 cat_prompt = """Start with root, and use category as the first path. 
 
 - In level names, replace space with underscores.
@@ -13,12 +13,17 @@ What is the three level path of the following item?
 
 %s
 
+Metadata (summary) %s
+
 
 Return in the following format:
 {
     "Reasoning": "....",
-    "Path": "/%s/2nd-level/3rd-level/%s"
-}"""
+    "Path": "/%s/[2nd-level]/[3rd-level]/%s"
+}
+
+- You must select a level name for 2nd-level or 3rd-level from the existing directory or with common-sence names. Do not use "2nd-level" or "3rd-level"
+"""
 
 request_prompt = f"""You are an expert in finding the most appropriate location in an existing hierarchical directory.
 

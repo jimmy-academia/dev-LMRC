@@ -1,3 +1,5 @@
+## run with python -m data.mid_sample
+
 import pickle
 import logging
 import random
@@ -317,9 +319,48 @@ def load_subsample(item_count=1000, source_pkl='cache/mid_sample_10k.pkl'):
         return selected_items
 
 
+def load_sample(source_pkl='cache/mid_sample_10k.pkl'):
+    #
+    with open(source_pkl, 'rb') as f:
+        source_manifest = pickle.load(f)
+    
+    with open(source_manifest["item_pool_file"], 'rb') as f:
+        item_pool = pickle.load(f)
+
+    from tqdm import tqdm
+    from utils import system_struct, user_struct, create_llm_client
+
+    expert = "You are expert in consumer products"
+    summary_prompt = "Summarize the item metadata into a 20 words summary. focus on product name and type, than descriptions: %s"
+    call_llm = create_llm_client()
+
+    for i in tqdm(range(len(item_pool)), 'enforcing summary'):
+        # if 'summary' not in item_pool[i]:
+        if True:
+            item_meta = item_pool[i]['metadata']
+            if len(item_meta) > 100:
+                item_summary = call_llm([system_struct(expert), user_struct(summary_prompt%item_meta)])
+            else:
+                item_summary = item_meta
+
+            item_pool[i]['summary'] = item_summary
+            logging.info(f'item summary: {item_summary} \n item metadat: {item_meta}')
+
+            with open(source_manifest["item_pool_file"], 'wb') as f:
+                pickle.dump(item_pool, f)
+
+
+    with open(source_manifest["requests_file"], 'rb') as f:
+        requests = pickle.load(f)
+    
+    return item_pool, requests
+
 if __name__ == "__main__":
     set_verbose(1)
     create_10k_sample()
+    item_pool, requests =  load_sample()
 
+    from debug import check
+    check()
 
 
