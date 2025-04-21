@@ -10,16 +10,23 @@ from utils import system_struct, user_struct
 from helper import create_prompt_dict, find_item_path, calculate_path_distance
 from prompt import sys_expert, cat_prompt, request_prompt
 
-def prepare_file_tree(item_pool, file_tree_path, call_llm):
+def prepare_file_tree(item_pool, file_tree_path, call_llm, append=False):
 
     file_tree_path = Path(file_tree_path)
-    if file_tree_path.exists():
-        logging.info(f'file tree exists, loading {file_tree_path}')
-        return loadj(file_tree_path)
 
-    logging.info(f'file tree does not exists, creating to {file_tree_path}...')
     file_tree = {}
+    if file_tree_path.exists():
+        file_tree = loadj(file_tree_path)
+        if not append:
+            logging.info(f'file tree exists, loading {file_tree_path}')
+            return file_tree
+    else:
+        logging.info(f'file tree does not exists, creating to {file_tree_path}...')
+        
     for item in item_pool:
+
+        if append and find_item_path(item["item_id"], file_tree) is not None:
+            continue
 
         prompt_dict = create_prompt_dict(file_tree)
 
@@ -56,8 +63,13 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm):
             current_level["item_ids"] = []
         current_level["item_ids"].append(item_id + ":" + item['summary'])
 
-        print(f"Added item {item_id} to path: {path}")
-        dumpj(file_tree, file_tree_path)
+        if not append:
+            logging.info(f"Added item {item_id} to path: {path}")
+            dumpj(file_tree, file_tree_path)
+        else:
+            logging.info(f"Appended item {item_id} to path: {path}")
+            logging.info('not saving the append items to file for now')
+
         
     return file_tree
     
@@ -65,22 +77,28 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm):
 
 def main():
     item_count = 200
+    file_tree_path = f'output/file_tree_sample_{item_count}.json'
     call_llm = create_llm_client()
     item_pool = load_subsample(item_count)
-    file_tree = prepare_file_tree(item_pool, f'output/file_tree_sample_{item_count}.json', call_llm)
+    file_tree = prepare_file_tree(item_pool, file_tree_path, call_llm)
 
-    __, requests =  load_sample()
+    full_item_pool, requests =  load_sample()
+
+    ## append items
+    id_list = [r['item_id'] for r in requests[:10]]
+    request_items = [item for item in full_item_pool if item['item_id'] in id_list]
+    file_tree = prepare_file_tree(request_items, file_tree_path, call_llm, append=True)
+
     for request in requests[:10]:
 
         input('TODO: append item into tree!!')
 
         prompt_dict = create_prompt_dict(file_tree)
 
-        formatted_prompt = request_prompt.format(json.dumps(prompt_dict, indent=2), request['query'], request['item_id'], request['item_id'])
+        formatted_prompt = request_prompt.format(json.dumps(prompt_dict, indent=2), request['query'], request['item_id'])
 
         response = call_llm([system_struct(sys_expert), user_struct(formatted_prompt)])
         result = json.loads(response)
-
 
         path = result["Path"]
         actual_path = find_item_path(request["item_id"], file_tree)
