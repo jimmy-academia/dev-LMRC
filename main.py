@@ -61,15 +61,11 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm, append=False):
             logging.warning(f'LLM hallucinated {path_components[-1]} for {item_id}!')
         if "item_ids" not in current_level:
             current_level["item_ids"] = []
-        current_level["item_ids"].append(item_id + ":" + item['summary'])
+        # current_level["item_ids"].append(item_id + ":" + item['summary']) 
+        current_level["item_ids"].append(item_id)
 
-        if not append:
-            logging.info(f"Added item {item_id} to path: {path}")
-            dumpj(file_tree, file_tree_path)
-        else:
-            logging.info(f"Appended item {item_id} to path: {path}")
-            logging.info('not saving the append items to file for now')
-
+        logging.info(f"Added item {item_id} to path: {path}")
+        dumpj(file_tree, file_tree_path)
         
     return file_tree
     
@@ -85,13 +81,13 @@ def main():
     full_item_pool, requests =  load_sample()
 
     ## append items
-    id_list = [r['item_id'] for r in requests[:10]]
+    id_list = [request['item_id'] for request in requests[:10]]
     request_items = [item for item in full_item_pool if item['item_id'] in id_list]
     file_tree = prepare_file_tree(request_items, file_tree_path, call_llm, append=True)
 
     for request in requests[:10]:
 
-        input('TODO: append item into tree!!')
+        actual_path = find_item_path(request["item_id"], file_tree)
 
         prompt_dict = create_prompt_dict(file_tree)
 
@@ -101,7 +97,6 @@ def main():
         result = json.loads(response)
 
         path = result["Path"]
-        actual_path = find_item_path(request["item_id"], file_tree)
         is_correct = False
         print('==== ====')
         print(f"Request query: {request['query']}")
