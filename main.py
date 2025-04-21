@@ -73,6 +73,7 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm, append=False):
 
 def main():
     item_count = 200
+    test_count = 20
     file_tree_path = f'output/file_tree_sample_{item_count}.json'
     call_llm = create_llm_client()
     item_pool = load_subsample(item_count)
@@ -81,11 +82,11 @@ def main():
     full_item_pool, requests =  load_sample()
 
     ## append items
-    id_list = [request['item_id'] for request in requests[:10]]
+    id_list = [request['item_id'] for request in requests[:test_count]]
     request_items = [item for item in full_item_pool if item['item_id'] in id_list]
     file_tree = prepare_file_tree(request_items, file_tree_path, call_llm, append=True)
 
-    for request in requests[:10]:
+    for request in requests[:test_count]:
 
         actual_path = find_item_path(request["item_id"], file_tree)
 
