@@ -288,7 +288,7 @@ Respond with only "ACCEPT" if the query is good quality and relevant to the prod
 
 # ##### SUBSAMPLE ##### #
 
-def load_subsample(item_count=1000, source_pkl='cache/mid_sample_10k.pkl'):
+def load_subsample(item_count, source_pkl='cache/mid_sample_10k.pkl'):
     """
     Load a random subsample of specified size, creating it if it doesn't exist.
     Returns only items (no requests).
@@ -335,8 +335,7 @@ def load_sample(source_pkl='cache/mid_sample_10k.pkl'):
     call_llm = create_llm_client()
 
     for i in tqdm(range(len(item_pool)), 'enforcing summary'):
-        # if 'summary' not in item_pool[i]:
-        if True:
+        if 'summary' not in item_pool[i]:
             item_meta = item_pool[i]['metadata']
             if len(item_meta) > 100:
                 item_summary = call_llm([system_struct(expert), user_struct(summary_prompt%item_meta)])

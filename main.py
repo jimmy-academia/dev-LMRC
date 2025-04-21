@@ -2,13 +2,13 @@ import json
 import logging
 from pathlib import Path
 
-from data import load_subsample
+from data import load_subsample, load_sample
 from utils import set_verbose, create_llm_client
 from utils import loadj, dumpj
 from utils import system_struct, user_struct
 
-from helper import create_prompt_dict
-from prompt import sys_expert, cat_prompt
+from helper import create_prompt_dict, find_item_path, calculate_path_distance
+from prompt import sys_expert, cat_prompt, request_prompt
 
 def prepare_file_tree(item_pool, file_tree_path, call_llm):
 
@@ -23,15 +23,9 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm):
 
         prompt_dict = create_prompt_dict(file_tree)
 
-        item_meta = item['metadata']
-        if len(item_meta) > 100:
-            item_summary = call_llm([system_struct(sys_expert), user_struct(summary_prompt%item_meta)])
-        else:
-            item_summary = 
-
         formatted_prompt = cat_prompt % (
             json.dumps(prompt_dict, indent=2),
-            str(item),
+            item['metadata'],
             item['summary'],
             item['category'],
             item['item_id']
@@ -60,7 +54,7 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm):
             logging.warning(f'LLM hallucinated {path_components[-1]} for {item_id}!')
         if "item_ids" not in current_level:
             current_level["item_ids"] = []
-        current_level["item_ids"].append(item_id + ":" + )
+        current_level["item_ids"].append(item_id + ":" + item['summary'])
 
         print(f"Added item {item_id} to path: {path}")
         dumpj(file_tree, file_tree_path)
@@ -72,9 +66,46 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm):
 def main():
     item_count = 200
     call_llm = create_llm_client()
-    item_pool = load_subsample()
+    item_pool = load_subsample(item_count)
     file_tree = prepare_file_tree(item_pool, f'output/file_tree_sample_{item_count}.json', call_llm)
+
+    __, requests =  load_sample()
+    for request in requests[:10]:
+
+        input('TODO: append item into tree!!')
+
+        prompt_dict = create_prompt_dict(file_tree)
+
+        formatted_prompt = request_prompt.format(json.dumps(prompt_dict, indent=2), request['query'], request['item_id'], request['item_id'])
+
+        response = call_llm([system_struct(sys_expert), user_struct(formatted_prompt)])
+        result = json.loads(response)
+
+
+        path = result["Path"]
+        actual_path = find_item_path(request["item_id"], file_tree)
+        is_correct = False
+        print('==== ====')
+        print(f"Request query: {request['query']}")
+        if actual_path:
+            path_components = path.strip('/').split('/')[:-1]  # Remove item_id
+            actual_components = actual_path.strip('/').split('/')[:-1]
+            is_correct = path_components == actual_components
+            
+            if is_correct:
+                print("✓ Correct path")
+                print(f">> The path: {path}")
+            else:
+                distance = calculate_path_distance(path, actual_path)
+                print(f"✗ Incorrect.")
+                print(f">> Predicted Path: {path}\n>> Actual path: {actual_path}\n === Distance: {distance} ===")
+        else:
+            print(f"{request["item_id"]}: Item not found in tree")
+        
+
+
 
 if __name__ == '__main__':
     set_verbose(1)
     main()
+
