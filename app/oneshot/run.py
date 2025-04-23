@@ -3,12 +3,12 @@ import logging
 from pathlib import Path
 
 from data import load_subsample, load_sample
-from utils import set_verbose, create_llm_client
+from utils import create_llm_client
 from utils import loadj, dumpj
 from utils import system_struct, user_struct
 
-from helper import create_prompt_dict, find_item_path, calculate_path_distance
-from prompt import sys_expert, cat_prompt, request_prompt
+from .helper import create_prompt_dict, find_item_path, calculate_path_distance
+from .prompt import sys_expert, cat_prompt, request_prompt
 
 def prepare_file_tree(item_pool, file_tree_path, call_llm, append=False):
 
@@ -71,7 +71,7 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm, append=False):
     
 
 
-def main():
+def run():
     item_count = 1000
     test_count = 20
     file_tree_path = f'output/file_tree_sample_{item_count}.json'
@@ -116,10 +116,3 @@ def main():
         else:
             print(f"{request["item_id"]}: Item not found in tree")
         
-
-
-
-if __name__ == '__main__':
-    set_verbose(1)
-    main()
-
