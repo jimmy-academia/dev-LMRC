@@ -17,12 +17,12 @@ def main():
     args = parser.parse_args()
     set_verbose(args.verbose)
     
-    if args.approach == 'oneshot':
+    if args.app == 'oneshot':
         from app.oneshot.run import run
-    elif args.approach == 'multistep':
+    elif args.app == 'multistep':
         from app.multistep.run import run 
     else:
-        logging.error(f"Unknown approach: {args.approach}")
+        logging.error(f"Unknown approach: {args.app}")
         exit(1)
 
     run()
