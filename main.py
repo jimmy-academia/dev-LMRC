@@ -72,7 +72,7 @@ def prepare_file_tree(item_pool, file_tree_path, call_llm, append=False):
 
 
 def main():
-    item_count = 200
+    item_count = 1000
     test_count = 20
     file_tree_path = f'output/file_tree_sample_{item_count}.json'
     call_llm = create_llm_client()
