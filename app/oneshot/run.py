@@ -21,6 +21,7 @@ def prepare_file_tree(item_pool, file_tree_path, log_tree_path, call_llm):
 
     if file_tree_path.exists():
         logging.warning(f'file tree exists, loading {file_tree_path}')
+        return loadj(file_tree_path)
         input('paused')
 
     logging.info(f'file tree does not exists, creating to {file_tree_path}...')
@@ -115,7 +116,7 @@ def fulfill_requests(file_tree, requests, record_path, log_request_path, call_ll
 
         print(msg)
         Record['messages'].append(msg)
-        Record['accuracy'] = result['correct']/result['total']
+        Record['accuracy'] = Record['correct']/Record['total']
         dumpj(Record, record_path)
 
 def run(args, item_pool, requests):
@@ -127,7 +128,7 @@ def run(args, item_pool, requests):
     log_tree_path = f'app/oneshot/output/log/file_tree_sample_{len(item_pool)}.json'
     record_path = f'app/oneshot/output/request_sample_{len(item_pool)}.json'
     log_request_path = f'app/oneshot/output/log/request_sample_{len(item_pool)}.json'
-    
+
     file_tree = prepare_file_tree(item_pool, file_tree_path, log_tree_path, call_llm)
     file_tree_usage = call_llm.get_usage()
     logging.info(f"File tree preparation usage: {file_tree_usage}")
