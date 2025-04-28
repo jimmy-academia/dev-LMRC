@@ -8,4 +8,4 @@ python main.py --app oneshot --verbose 1
 # echo "Running multistep method..."
 # python main.py --app multistep --verbose 1
 
-echo "Both methods completed."
+# echo "Both methods completed."
