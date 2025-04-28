@@ -7,6 +7,8 @@ import logging
 from utils import set_verbose
 from data import load_subsample
 
+from debug import check
+
 def main():
     parser = argparse.ArgumentParser(description='Run LMRC implementations')
     parser.add_argument('--app', '-a', type=str, default='multistep',
@@ -22,8 +24,7 @@ def main():
     item_count = 1000
     test_count = 20
     item_pool, requests = load_subsample(item_count)
-
-    input('good')
+    logging.info(f"loaded {len(item_pool)} items and {len(requests)} requests.")
 
     if args.app == 'oneshot':
         from app.oneshot.run import run
@@ -33,7 +34,7 @@ def main():
         logging.error(f"Unknown approach: {args.app}")
         exit(1)
 
-    run()
+    run(item_pool, requests)
     
 if __name__ == '__main__':
     main()
