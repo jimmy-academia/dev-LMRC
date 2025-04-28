@@ -9,6 +9,14 @@ from collections import Counter, defaultdict
 
 from utils import create_llm_client, system_struct, user_struct, set_verbose
 
+from debug import check
+
+'''
+request:
+item_pool: [{dict_keys(['item_id', 'category', 'metadata', 'summary'])},...]
+selected_request: [dict_keys(['qid', 'query', 'item_id', 'user_id', 'ori_rating', 'ori_review'])....]
+'''
+
 def create_10k_sample(
     data_pkl='cache/queries_item_pool.pkl',
     output_pkl='cache/mid_sample_10k.pkl',
@@ -284,11 +292,33 @@ Respond with only "ACCEPT" if the query is good quality and relevant to the prod
     decision = "ACCEPT" in response.upper()
     return decision, response
 
-
-
 # ##### SUBSAMPLE ##### #
 
-def load_subsample(item_count, source_pkl='cache/mid_sample_10k.pkl'):
+def update_selected_items(selected_items, selected_request, full_items_list):
+    # Get IDs from both lists
+    request_item_ids = set(req['item_id'] for req in selected_request)
+    existing_item_ids = {item['item_id'] for item in selected_items}
+    
+    # Find missing request items from the full list
+    missing_ids = request_item_ids - existing_item_ids
+    items_to_add = [item for item in full_items_list if item['item_id'] in missing_ids]
+    
+    # If nothing to add, return original list
+    if not items_to_add:
+        return selected_items
+    
+    # Identify removable items (those not in request_item_ids)
+    removable_items = [item for item in selected_items if item['item_id'] not in request_item_ids]
+    
+    # Check if we can maintain the length
+    import random
+    num_to_remove = min(len(items_to_add), len(removable_items))
+    items_to_remove = random.sample(removable_items, num_to_remove)
+    
+    # Create new list without removed items, then add new items
+    return [item for item in selected_items if item not in items_to_remove] + items_to_add[:num_to_remove]
+
+def load_subsample(item_count=1000, test_count=20, source_pkl='cache/mid_sample_10k.pkl'):
     """
     Load a random subsample of specified size, creating it if it doesn't exist.
     Returns only items (no requests).
@@ -296,27 +326,34 @@ def load_subsample(item_count, source_pkl='cache/mid_sample_10k.pkl'):
     subsample_path = Path(f'cache/subsample_{item_count}.pkl')
     
     if subsample_path.exists():
-        # Load existing subsample
+        logging.info("# Load existing subsample")
         with open(subsample_path, 'rb') as f:
-            return pickle.load(f)
+            selected_items, selected_request = pickle.load(f)
     else:
+        logging.info("# Making subsample and then using...")
         # Load source items
         with open(source_pkl, 'rb') as f:
             source_manifest = pickle.load(f)
         
         with open(source_manifest["item_pool_file"], 'rb') as f:
             source_items = pickle.load(f)
-        
+    
+        with open(source_manifest["requests_file"], 'rb') as f:
+            source_requests = pickle.load(f)
+    
         # Create random subsample
-        selected_items = random.sample(source_items, min(item_count, len(source_items)))
-        
+        selected_items = random.sample(source_items, item_count)
+        selected_request = random.sample(source_requests, test_count)
+
+        selected_items = update_selected_items(selected_items, selected_request, source_items)
+
         # Save subsample
         os.makedirs(subsample_path.parent, exist_ok=True)
         with open(subsample_path, 'wb') as f:
-            pickle.dump(selected_items, f)
+            pickle.dump([selected_items, selected_request], f)
             
         logging.info(f"Created and saved subsample with {len(selected_items)} items")
-        return selected_items
+    return selected_items, selected_request
 
 
 def load_sample(source_pkl='cache/mid_sample_10k.pkl'):
@@ -357,7 +394,8 @@ def load_sample(source_pkl='cache/mid_sample_10k.pkl'):
 if __name__ == "__main__":
     set_verbose(1)
     create_10k_sample()
-    item_pool, requests =  load_sample()
+    # item_pool, requests =  load_sample()
+    load_subsample()
 
     from debug import check
     check()

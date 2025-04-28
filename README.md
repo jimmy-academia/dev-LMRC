@@ -6,7 +6,8 @@
 ## log
 
 - [2025-4-23] `improve` branch is bottom-up one shot; `master` branch will do bottom-up multi-step.
-    - new structure: different methods in different directories under `methods`
+    - new structure: different methods in different directories under `app`
+    - working on `app/multishot`!!
 - [2025-4-21] mid_sample run finished; checked; reran file tree 200 ... good
     ==> we will check summary in file tree separately
 - [2025-4-19] Enforcing summary (`python -m data.mid_sample`) => todo; complete `formatted prompt` with `item['summary']` in `main.py`
