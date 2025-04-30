@@ -3,6 +3,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 from tqdm import tqdm
+from pathlib import Path
 
 from utils import create_llm_client, ensure_dir, loadj, dumpj, system_struct, user_struct
 from .helper import create_prompt_dict, find_item_path, calculate_path_distance
@@ -182,6 +183,11 @@ def multi_file_tree(item_pool, file_tree_path, log_path, call_llm):
     global LLM_LOG
     LLM_LOG = []
     
+    # Check if file tree already exists
+    if Path(file_tree_path).exists():
+        logging.warning(f'File tree exists, loading {file_tree_path}')
+        return loadj(file_tree_path)
+    
     # Group by top-level category
     categories = defaultdict(list)
     for item in tqdm(item_pool, desc='initial dump', ncols=88):
@@ -199,69 +205,166 @@ def multi_file_tree(item_pool, file_tree_path, log_path, call_llm):
     return result
 
 def fulfill_requests(file_tree, requests, record_path, log_path, call_llm):
-    """Process user requests against the file tree."""
+    """
+    Process user requests against the file tree using a multi-step approach.
+    Navigate through the hierarchy one level at a time for better precision.
+    """
+    from utils import system_struct, user_struct
+    from .prompt import sys_expert
+    
     global LLM_LOG
     LLM_LOG = []
     
-    log_result = []
+    # Add Record tracking from oneshot version
     Record = {'total': 0, 'correct': 0, 'notfounderror': 0, 'messages': []}
     
-    prompt_dict = create_prompt_dict(file_tree)
+    results = []
+    
+    # Create a navigation prompt template
+    
     
     for request in requests:
-        actual_path = find_item_path(request["item_id"], file_tree)
+        item_id = request["item_id"]
+        query = request["query"]
+        actual_path = find_item_path(item_id, file_tree)
         
-        formatted_prompt = request_prompt.format(
-            tree_dict=json.dumps(prompt_dict, indent=2), 
-            query=request['query'], 
-            item_id=request['item_id']
-        )
-        
-        response = logged_llm_call([system_struct(sys_expert), user_struct(formatted_prompt)], call_llm)
-        
-        try:
-            result = json.loads(response)
-            result["usage"] = call_llm.get_usage()
-            log_result.append(result)
-            dumpj(log_result, log_path)
+        if not actual_path:
+            logging.warning(f"Item {item_id} not found in file tree. Skipping request.")
+            results.append({
+                "item_id": item_id,
+                "query": query,
+                "predicted_path": None,
+                "actual_path": None,
+                "steps_taken": [],
+                "is_correct": False,
+                "error": "Item not found in file tree"
+            })
             
-            path = result["Path"]
-            is_correct = False
-            
-            print('==== ====')
-            print(f"Request query: {request['query']}")
-            
-            if actual_path:
-                path_components = path.strip('/').split('/')[:-1]  # Remove item_id
-                actual_components = actual_path.strip('/').split('/')[:-1]
-                is_correct = path_components == actual_components
-                
-                Record['total'] += 1
-                
-                if is_correct:
-                    msg = f"✓ Correct path: {path}"
-                    Record['correct'] += 1
-                else:
-                    distance = calculate_path_distance(path, actual_path)
-                    msg = f"✗ Incorrect. Predicted: {path}, Actual: {actual_path}, Distance: {distance}"
-            else:
-                msg = f"{request['item_id']}: Item not found in tree"
-                Record['notfounderror'] += 1
-            
-            print(msg)
+            # Add to Record tracking
+            msg = f"{item_id}: Item not found in tree"
+            Record['notfounderror'] += 1
             Record['messages'].append(msg)
+            print(msg)
             
-            if Record['total'] > 0:
-                Record['accuracy'] = Record['correct'] / Record['total']
+            continue
+        
+        # Start navigation from the root
+        current_node = file_tree
+        current_path = ""
+        navigation_steps = []
+        
+        # Navigate until we reach a leaf node (with "item_ids") or can't navigate further
+        while "item_ids" not in current_node:
+            # Get available branches at this level
+            available_branches = [branch for branch in current_node.keys() if branch != "item_ids"]
+            
+            if not available_branches:
+                break
                 
-            dumpj(Record, record_path)
+            # Format the navigation prompt
+            prompt = navigate_prompt.format(
+                current_path=current_path if current_path else "/ (root)",
+                available_branches=", ".join(available_branches),
+                query=query
+            )
             
-        except Exception as e:
-            logging.error(f"Error processing request {request['item_id']}: {e}")
-            Record['messages'].append(f"Error processing request {request['item_id']}: {e}")
-            dumpj(Record, record_path)
+            # Call LLM to get branch selection
+            response = logged_llm_call([
+                system_struct(sys_expert), 
+                user_struct(prompt)
+            ], call_llm)
+            
+            try:
+                result = json.loads(response)
+                selected_branch = result["SelectedBranch"]
+                
+                # Check if the selected branch exists
+                if selected_branch not in available_branches:
+                    logging.warning(f"Selected branch '{selected_branch}' not found. Using first available branch.")
+                    selected_branch = available_branches[0]
+                
+                # Record the navigation step
+                navigation_steps.append({
+                    "path": current_path,
+                    "available_branches": available_branches,
+                    "selected_branch": selected_branch,
+                    "reasoning": result.get("Reasoning", "")
+                })
+                
+                # Update current node and path
+                current_node = current_node[selected_branch]
+                current_path = f"{current_path}/{selected_branch}" if current_path else selected_branch
+                
+            except Exception as e:
+                logging.error(f"Error navigating for request {item_id}: {e}")
+                break
+        
+        # Construct the final predicted path
+        predicted_path = f"{current_path}/{item_id}" if current_path else f"/{item_id}"
+        
+        # Check if prediction is correct
+        is_correct = False
+        distance = None
+        
+        print('==== ====')
+        print(f"Request query: {query}")
+        
+        if actual_path:
+            pred_components = predicted_path.strip('/').split('/')[:-1]
+            actual_components = actual_path.strip('/').split('/')[:-1]
+            is_correct = pred_components == actual_components
+            
+            Record['total'] += 1
+            
+            if is_correct:
+                msg = f"✓ Correct path: {predicted_path}"
+                Record['correct'] += 1
+            else:
+                distance = calculate_path_distance(predicted_path, actual_path)
+                msg = f"✗ Incorrect. Predicted: {predicted_path}, Actual: {actual_path}, Distance: {distance}"
+        else:
+            msg = f"{item_id}: Item not found in tree"
+            Record['notfounderror'] += 1
+        
+        print(msg)
+        Record['messages'].append(msg)
+        
+        if Record['total'] > 0:
+            Record['accuracy'] = Record['correct'] / Record['total']
+        
+        dumpj(Record, record_path + ".accuracy.json")
+        
+        result = {
+            "item_id": item_id,
+            "query": query,
+            "predicted_path": predicted_path,
+            "actual_path": actual_path,
+            "steps_taken": navigation_steps,
+            "is_correct": is_correct,
+            "distance": distance
+        }
+        
+        results.append(result)
+        
+        # Log outcome for this request
+        status = "✓ Correct" if is_correct else f"✗ Incorrect (Distance: {distance})"
+        logging.info(f"Request: {query}")
+        logging.info(f"Path: {predicted_path}")
+        logging.info(f"Status: {status}")
     
-    return Record
+    # Save results and logs
+    dumpj(results, record_path)
+    dumpj(LLM_LOG, log_path)
+    dumpj(Record, record_path + ".accuracy.json")
+    
+    # Calculate and return statistics
+    correct_count = sum(1 for r in results if r.get("is_correct", False))
+    total_count = len(results)
+    accuracy = correct_count / total_count if total_count > 0 else 0
+    
+    logging.info(f"Request fulfillment complete. Accuracy: {accuracy:.2f} ({correct_count}/{total_count})")
+    
+    return results
 
 def run(args, item_pool, requests):
     call_llm = create_llm_client(model=args.model)
