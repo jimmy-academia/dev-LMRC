@@ -35,6 +35,11 @@ def main():
         from app.oneshot.run import run
     elif args.app == 'multistep':
         from app.multistep.run import run 
+    ## the other baselines ##
+    elif args.app in ['sim_query_item', 'sim_llm_item', 'sim_cot_item']:
+        from app.baseline.similarity import run
+    elif args.app == "generative_retrieval":
+        from app.generative.retrieval import run
     else:
         logging.error(f"Unknown approach: {args.app}")
         exit(1)
