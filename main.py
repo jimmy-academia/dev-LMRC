@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--verbose', '-v', type=int, default=1,
                         help='Verbosity level (0-2)')
     parser.add_argument('--app', '-a', type=str, default='multistep',
-                        choices=['oneshot', 'multistep'],
+                        choices=['oneshot', 'multistep', 'sim_query_item', 'sim_llm_item', 'sim_cot_item'],
                         help='Choose the method approach to tackle LMRC')
     parser.add_argument('--model', type=str, default='gpt-4o-mini',
                         help='Choose Openai API model.')

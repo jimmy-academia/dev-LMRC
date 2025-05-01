@@ -18,9 +18,19 @@ def set_seeds(seed):
     os.environ['PYTHONHASHSEED'] = str(seed)
 
 def set_verbose(verbose):
-    # usage: logging.warning; logging.error; logging.info; logging.debug
+    """
+    Configure logging level and suppress OpenAI HTTP request logs.
+    
+    Args:
+        verbose (int): 0=WARNING, 1=INFO, 2=DEBUG
+    """
+    import logging
+    
+    # Remove any existing handlers
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
+    
+    # Set appropriate level based on verbosity
     if verbose == 0:
         level = logging.WARNING
     elif verbose == 1:
@@ -29,13 +39,22 @@ def set_verbose(verbose):
         level = logging.DEBUG
     else:
         level = logging.DEBUG  # fallback
+    
+    # Configure root logger
     logging.basicConfig(
         level=level,
         format='%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%H:%M:%S',
         handlers=[logging.StreamHandler()],
     )
-
+    
+    # Suppress OpenAI HTTP request logs
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("openai.http_client").setLevel(logging.WARNING)
+    
+    # You can add other library suppressions here if needed
+    # logging.getLogger("urllib3").setLevel(logging.WARNING)
+    
 # ====
 
 def readf(path):

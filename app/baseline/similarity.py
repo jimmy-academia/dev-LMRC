@@ -9,7 +9,7 @@ This module serves as an entry point for three similarity search approaches:
 
 import logging
 
-# Import specific retrievers
+# Import the base retriever and specialized retrievers
 from .base_retriever import SimilarityRetriever
 from .llm_retriever import LLMEnhancedSimilarityRetriever
 from .cot_retriever import CoTEnhancedSimilarityRetriever
@@ -29,6 +29,7 @@ def run(args, item_pool, requests):
     """
     # Select retriever class based on app type
     if args.app == 'sim_query_item':
+        # Use the base retriever directly for direct similarity (no enhancement)
         retriever = SimilarityRetriever(args)
         logging.info("Using direct similarity retrieval (no query enhancement)")
     elif args.app == 'sim_llm_item':
