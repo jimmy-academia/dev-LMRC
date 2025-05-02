@@ -48,13 +48,17 @@ def set_verbose(verbose):
         handlers=[logging.StreamHandler()],
     )
     
-    # Suppress OpenAI HTTP request logs
-    logging.getLogger("openai").setLevel(logging.WARNING)
-    logging.getLogger("openai.http_client").setLevel(logging.WARNING)
+    # Suppress all OpenAI-related logs more thoroughly
+    logging.getLogger("openai").setLevel(logging.ERROR)
+    logging.getLogger("openai.http_client").setLevel(logging.ERROR)
+    logging.getLogger("httpx").setLevel(logging.ERROR)  # OpenAI uses httpx
+    logging.getLogger("urllib3").setLevel(logging.ERROR)
     
-    # You can add other library suppressions here if needed
-    # logging.getLogger("urllib3").setLevel(logging.WARNING)
-    
+    # Disable propagation for OpenAI loggers
+    logging.getLogger("openai").propagate = False
+    logging.getLogger("openai.http_client").propagate = False
+    logging.getLogger("httpx").propagate = False
+
 # ====
 
 def readf(path):
