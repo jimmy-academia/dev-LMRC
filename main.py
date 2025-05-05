@@ -5,7 +5,7 @@ Main entry point for running different LMRC implementations.
 import argparse
 import logging
 from utils import set_seeds, set_verbose
-from data import load_subsample
+from data import load_subsample, load_sample
 
 from debug import check
 
@@ -26,9 +26,12 @@ def main():
     set_verbose(args.verbose)
 
     ## prepare environment: item_pool, requests
-    item_count = 500
-    test_count = 100
-    item_pool, requests = load_subsample(item_count)
+    # item_count = 500
+    # test_count = 100
+    # item_pool, requests = load_subsample(item_count, test_count=test_count)
+    item_pool, requests = load_sample()
+    requests = requests[:100]
+
     logging.info(f"loaded {len(item_pool)} items and {len(requests)} requests.")
 
     if args.app == 'oneshot':

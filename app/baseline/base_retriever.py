@@ -107,9 +107,12 @@ class SimilarityRetriever:
         item_texts = []
         for item in item_pool:
             # Combine metadata and summary if available
-            text = item.get('metadata', '')
+            # text = item.get('metadata', '')
             if 'summary' in item:
-                text = f"{text} {item['summary']}"
+                text = item.get('summary', '')
+            else:
+                text = item.get('metadata', '')[:500]
+                # text = f"{text} {item['summary']}"
             item_texts.append(text)
         
         # Track initial cost

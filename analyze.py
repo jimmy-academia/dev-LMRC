@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 
+from data import load_sample
 
 def load_json(filepath):
     """Load a JSON file."""
@@ -50,15 +51,17 @@ def analyze_results(method, item_count):
         return
     
     # Load item pool from cached file if possible (or load from original source)
-    item_pool_file = Path(f'cache/subsample_{item_count}.pkl')
-    if item_pool_file.exists():
-        import pickle
-        with open(item_pool_file, 'rb') as f:
-            item_pool, _ = pickle.load(f)
+    if item_count != 10000:
+        item_pool_file = Path(f'cache/subsample_{item_count}.pkl')
+        if item_pool_file.exists():
+            import pickle
+            with open(item_pool_file, 'rb') as f:
+                item_pool, _ = pickle.load(f)
+        else:
+            print(f"Warning: Couldn't load item pool directly. Need to specify item file path.")
+            return
     else:
-        print(f"Warning: Couldn't load item pool directly. Need to specify item file path.")
-        return
-    
+        item_pool, _ = load_sample()
     # Print stats summary
     print(f"\n{'='*80}")
     print(f"ANALYSIS FOR: {method.upper()} ({item_count} items)")
@@ -124,8 +127,8 @@ def main():
     parser.add_argument('--method', type=str, default='sim_query_item',
                         choices=['sim_query_item', 'sim_llm_item', 'sim_cot_item'],
                         help='Baseline method to analyze')
-    parser.add_argument('--item_count', type=int, default=500,
-                        help='Number of items in the dataset')
+    parser.add_argument('--item_count', type=int, default=10000, 
+                        help='Number of items in the dataset') #500
     
     args = parser.parse_args()
     
@@ -140,7 +143,7 @@ def main():
         print(f"COMPARISON OF HIT RATES")
         print(f"{'='*80}")
         
-        print(f"\n{'Method':<20} | {'HR@1':<8} | {'HR@3':<8} | {'HR@5':<8} | {'HR@10':<8} | {'HR@20':<8}")
+        print(f"\n{'Method':<20} | {'HR@1':<8} | {'HR@3':<8} | {'HR@5':<8} | {'HR@10':<8} | {'HR@20':<8} | {'HR@50':<8} | {'HR@100':<8}")
         print(f"{'-'*20}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
         
         for method in methods:
@@ -149,13 +152,15 @@ def main():
             
             if not stats:
                 continue
-                
+            
             hit_rates = stats['hit_rates']
             print(f"{method:<20} | {hit_rates.get('hit_rate@1', 0):<8.4f} | "
                   f"{hit_rates.get('hit_rate@3', 0):<8.4f} | "
                   f"{hit_rates.get('hit_rate@5', 0):<8.4f} | "
                   f"{hit_rates.get('hit_rate@10', 0):<8.4f} | "
-                  f"{hit_rates.get('hit_rate@20', 0):<8.4f}")
+                  f"{hit_rates.get('hit_rate@20', 0):<8.4f} | "
+                  f"{hit_rates.get('hit_rate@50', 0):<8.4f} | "
+                  f"{hit_rates.get('hit_rate@100', 0):<8.4f}")
 
 
 if __name__ == '__main__':
