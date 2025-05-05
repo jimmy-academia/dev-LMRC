@@ -380,7 +380,8 @@ def generate_constraint_value(spec, current_value, constraint_type):
     
     constraint = {
         "spec": spec,
-        "type": constraint_type
+        "type": constraint_type,
+        "operator": "prefer"  # Default operator to ensure it's always defined
     }
     
     # Handle different types of specs
@@ -442,6 +443,10 @@ def generate_constraint_value(spec, current_value, constraint_type):
         else:
             constraint["operator"] = "prefer"
             constraint["value"] = current_value
+    
+    # Ensure value is set
+    if "value" not in constraint:
+        constraint["value"] = current_value
     
     # Add human-readable description
     constraint["description"] = format_constraint_description(constraint)
