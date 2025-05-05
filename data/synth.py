@@ -1,38 +1,34 @@
 #!/usr/bin/env python3
+# run => python -m data.synth
 """
-Improved Synthetic Dataset Generator for Testing Retrieval Methods
+Streamlined Synthetic Dataset Generator for Testing Retrieval Methods
 
-This script generates:
-1. Synthetic product data with realistic specifications
-2. Corresponding search queries based on hard and soft constraints
-3. Ground truth relevance rankings with proper constraint filtering and weighted scoring
-
-The output is saved in formats compatible with baseline retrieval methods.
+Generates realistic product data, search queries with constraints, and relevance rankings.
 """
 
-import os
-import json
 import random
-import time
+import os
 from pathlib import Path
-from datetime import datetime
-from collections import defaultdict
-from tqdm import tqdm
 import numpy as np
+from tqdm import tqdm
+import time
 
 from utils import dumpj, create_llm_client, user_struct, system_struct, ensure_dir
 
 # --- Configuration ---
-NUM_PRODUCTS = 200               # Total number of products to generate
-NUM_REQUESTS = 50                # Total number of requests to generate
-OUTPUT_DIR = "generated_data"    # Output directory
-LLM_DELAY = 1                    # Delay between LLM calls to avoid rate limits
-PRODUCT_FILENAME = "products.json"
-REQUESTS_FILENAME = "requests.json"
-COMPATIBLE_FILENAME = "baseline_compatible.json"
+CONFIG = {
+    "num_products": 200,
+    "num_requests": 50,
+    "output_dir": "cache/synth_products",
+    "llm_delay": 0,
+    "filenames": {
+        "products": "products.json",
+        "requests": "requests.json"
+    }
+}
 
-# --- Product Specification Templates with Tiers ---
-spec_templates = {
+# --- Product Templates ---
+PRODUCT_TEMPLATES = {
     "Laptop": {
         "Budget": {
             "price": (400, 700), "ram_gb": [8], "storage_gb": [256, 512],
@@ -56,7 +52,7 @@ spec_templates = {
             "price": (1000, 3500), "ram_gb": [16, 32, 64], "storage_gb": [1000, 2000, 4000],
             "cpu": ["Intel Core i7/i9 HX", "AMD Ryzen 7/9 HX"], "gpu": ["NVIDIA RTX 4060", "NVIDIA RTX 4070", "NVIDIA RTX 4080/4090", "AMD RX 7700S/7800M"],
             "screen_inches": (15.6, 17.3), "resolution": ["1920x1080", "2560x1440"], "refresh_hz": [144, 165, 240, 300],
-            "battery_hours": (3, 6), "weight_kg": (1.8, 3.0) # Lower battery life during gaming
+            "battery_hours": (3, 6), "weight_kg": (1.8, 3.0)
         }
     },
     "Smartphone": {
@@ -72,8 +68,8 @@ spec_templates = {
         },
         "Flagship": {
             "price": (700, 1500), "ram_gb": [8, 12, 16], "storage_gb": [256, 512, 1000],
-            "screen_inches": (6.5, 6.9), "resolution": ["FHD+ (e.g. 2400x1080)", "QHD+ (e.g. 3200x1440)"], "refresh_hz": [120], # Often LTPO 1-120Hz
-            "battery_mah": (4500, 5500), "main_camera_mp": [50, 108, 200], # Plus secondary cameras
+            "screen_inches": (6.5, 6.9), "resolution": ["FHD+ (e.g. 2400x1080)", "QHD+ (e.g. 3200x1440)"], "refresh_hz": [120],
+            "battery_mah": (4500, 5500), "main_camera_mp": [50, 108, 200],
             "weight_g": (170, 230)
         }
     },
@@ -86,18 +82,18 @@ spec_templates = {
         "Mainstream/Gaming": {
             "price": (250, 600), "screen_inches": [27, 31.5],
             "resolution": ["1920x1080", "2560x1440"], "panel_type": ["IPS", "Fast VA"], "refresh_hz": [144, 165, 180],
-            "response_time_ms": [1, 2], "brightness_nits": (300, 400), "color_gamut_dcip3": (90, 98) # Often DCI-P3 for gaming
+            "response_time_ms": [1, 2], "brightness_nits": (300, 400), "color_gamut_dcip3": (90, 98)
         },
         "Professional/High-End": {
-            "price": (500, 2000), "screen_inches": [27, 32, 34], # Include Ultrawide potential implicitly
+            "price": (500, 2000), "screen_inches": [27, 32, 34],
             "resolution": ["2560x1440", "3840x2160", "3440x1440"], "panel_type": ["IPS", "OLED"], "refresh_hz": [60, 120, 144],
-            "response_time_ms": [1, 4, 5], "brightness_nits": (350, 600), # Check HDR specs too
-            "color_gamut_adobergb": (95, 100) # Often AdobeRGB or high DCI-P3 for pro work
+            "response_time_ms": [1, 4, 5], "brightness_nits": (350, 600),
+            "color_gamut_adobergb": (95, 100)
         }
     }
 }
 
-# --- Query Types for Request Generation ---
+# --- Query Types ---
 QUERY_TYPES = [
     {
         "name": "specific_need",
@@ -136,183 +132,187 @@ QUERY_TYPES = [
     }
 ]
 
-# --- Constraint Generation Utilities ---
+# --- Readable Key Mapping ---
+READABLE_KEY_MAP = {
+    "ram_gb": "RAM", "storage_gb": "Storage", "cpu": "Processor", "gpu": "Graphics",
+    "screen_inches": "Screen Size", "resolution": "Resolution", "refresh_hz": "Refresh Rate",
+    "battery_hours": "Battery Life (Hours)", "weight_kg": "Weight (kg)", "price": "Price",
+    "battery_mah": "Battery Capacity (mAh)", "main_camera_mp": "Main Camera", "weight_g": "Weight (g)",
+    "panel_type": "Panel Type", "response_time_ms": "Response Time (ms)",
+    "brightness_nits": "Brightness (nits)", "color_gamut_srgb": "sRGB Coverage (%)",
+    "color_gamut_dcip3": "DCI-P3 Coverage (%)", "color_gamut_adobergb": "Adobe RGB Coverage (%)"
+}
 
-def select_constraint_specs(product_type, tier, specs, num_hard, num_soft):
-    """Select specifications to use as constraints based on product type."""
-    # Define key specs that are most commonly used as constraints by product type
+# --- Spec Ranges for Normalization ---
+SPEC_RANGES = {
+    "price": (80, 4000),
+    "ram_gb": (4, 64),
+    "storage_gb": (64, 4000),
+    "screen_inches": (6, 34),  # Combines both phone and monitor ranges
+    "refresh_hz": (60, 360),
+    "battery_hours": (2, 18),
+    "weight_kg": (0.8, 3.5),
+    "battery_mah": (3000, 6000),
+    "main_camera_mp": (8, 200),
+    "weight_g": (120, 250),
+    "response_time_ms": (0.1, 5),
+    "brightness_nits": (200, 1000)
+}
+
+# --- Average Values for Specs ---
+AVG_SPEC_VALUES = {
+    "price": 800,
+    "ram_gb": 16,
+    "storage_gb": 512,
+    "screen_inches": 15,
+    "refresh_hz": 120,
+    "battery_hours": 8,
+    "weight_kg": 1.5,
+    "weight_g": 180,
+    "battery_mah": 4500,
+    "main_camera_mp": 50,
+    "response_time_ms": 2,
+    "brightness_nits": 350
+}
+
+def generate_product_specs(product_type, tier_name):
+    """Generate product specifications based on template."""
+    template = PRODUCT_TEMPLATES[product_type][tier_name]
+    specs = {}
+    spec_details = []
+    
+    for key, value in template.items():
+        if isinstance(value, list):
+            generated_value = random.choice(value)
+        elif isinstance(value, tuple) and len(value) == 2:
+            if all(isinstance(x, int) for x in value):
+                generated_value = random.randint(value[0], value[1])
+            elif all(isinstance(x, float) for x in value):
+                generated_value = round(random.uniform(value[0], value[1]), 2 if key == 'price' else 1)
+        else:
+            continue
+        
+        specs[key] = generated_value
+        
+        # Format for prompt string
+        readable_key = READABLE_KEY_MAP.get(key, key.replace('_', ' ').title())
+        formatted_value = generated_value
+        
+        # Add units/context for prompt clarity
+        unit = ""
+        if key == 'price': 
+            unit = "$" 
+            formatted_value = f"{generated_value:,.2f}"
+        elif key == 'ram_gb': 
+            unit = " GB"
+        elif key == 'storage_gb': 
+            unit = " GB" if generated_value < 1000 else " TB"
+            formatted_value = generated_value if generated_value < 1000 else generated_value // 1000
+        elif key == 'screen_inches': 
+            unit = '"'
+        elif key == 'weight_kg': 
+            unit = " kg"
+        elif key == 'weight_g': 
+            unit = " g"
+        elif key == 'battery_hours': 
+            unit = " hours (est.)"
+        elif key == 'battery_mah': 
+            unit = " mAh"
+        elif key == 'main_camera_mp': 
+            unit = " MP"
+        elif key == 'refresh_hz': 
+            unit = " Hz"
+        elif key == 'response_time_ms': 
+            unit = " ms"
+        elif key == 'brightness_nits': 
+            unit = " nits"
+        elif 'color_gamut' in key: 
+            unit = "%"
+        
+        spec_details.append(f"- {readable_key}: {formatted_value}{unit}")
+    
+    return specs, "\n".join(spec_details)
+
+def generate_product_description(llm_client, product_type, tier_name, spec_details):
+    """Generate product description using LLM."""
+    prompt = f"""
+Generate a realistic product description for the following electronic item:
+
+Product Type: {product_type}
+Tier: {tier_name}
+Specifications:
+{spec_details}
+
+Instructions:
+- Weave ALL the specifications into a compelling product description paragraph.
+- Use engaging but informative tone typical for retail websites.
+- Highlight 1-2 key strengths based on the specifications.
+- Make the description coherent, easy to read, and authentic.
+- Don't invent significant features not listed above.
+"""
+    
+    return llm_client([user_struct(prompt)])
+
+def generate_products(llm_client, num_products=CONFIG["num_products"]):
+    """Generate synthetic product data with realistic specifications."""
+    products = []
+    product_types = list(PRODUCT_TEMPLATES.keys())
+    
+    print(f"Generating {num_products} synthetic products...")
+    
+    for i in range(num_products):
+        product_type = random.choice(product_types)
+        tiers = list(PRODUCT_TEMPLATES[product_type].keys())
+        tier_name = random.choice(tiers)
+        
+        print(f"\n[{i+1}/{num_products}] Generating: {tier_name} {product_type}")
+        
+        # Generate specs and format for prompt
+        specs, spec_details = generate_product_specs(product_type, tier_name)
+        
+        # Generate description
+        print(f"  Calling LLM for description...")
+        description = generate_product_description(llm_client, product_type, tier_name, spec_details)
+        
+        if description:
+            print(f"  Received description ({len(description)} chars)")
+            products.append({
+                "id": i,
+                "product_type": product_type,
+                "tier": tier_name,
+                "specs": specs,
+                "description": description.strip()
+            })
+        else:
+            print(f"  Failed to get description for item {i}. Skipping.")
+        
+        # Delay between requests
+        if i < num_products - 1 and CONFIG["llm_delay"] > 0:
+            time.sleep(CONFIG["llm_delay"])
+        
+    return products
+
+def select_constraint_key_candidates(product_type):
+    """Get constraint key candidates for a product type."""
     key_specs_by_type = {
         "Laptop": {
             "hard_candidates": ["price", "ram_gb", "storage_gb", "screen_inches", "gpu", "cpu"],
-            "soft_candidates": ["battery_hours", "weight_kg", "resolution", "refresh_hz"],
-            "ranges": {
-                "price": (300, 4000),
-                "ram_gb": (4, 64),
-                "storage_gb": (128, 4000),
-                "screen_inches": (11, 18),
-                "refresh_hz": (60, 360),
-                "battery_hours": (2, 18),
-                "weight_kg": (0.8, 3.5)
-            }
+            "soft_candidates": ["battery_hours", "weight_kg", "resolution", "refresh_hz"]
         },
         "Smartphone": {
             "hard_candidates": ["price", "ram_gb", "storage_gb", "main_camera_mp"],
-            "soft_candidates": ["battery_mah", "screen_inches", "refresh_hz", "weight_g"],
-            "ranges": {
-                "price": (100, 2000),
-                "ram_gb": (3, 20),
-                "storage_gb": (32, 1000),
-                "main_camera_mp": (8, 200),
-                "battery_mah": (3000, 6000),
-                "refresh_hz": (60, 120),
-                "weight_g": (120, 250)
-            }
+            "soft_candidates": ["battery_mah", "screen_inches", "refresh_hz", "weight_g"]
         },
         "Monitor": {
             "hard_candidates": ["price", "screen_inches", "resolution", "refresh_hz", "panel_type"],
-            "soft_candidates": ["response_time_ms", "brightness_nits", "color_gamut_srgb", "color_gamut_dcip3", "color_gamut_adobergb"],
-            "ranges": {
-                "price": (80, 2500),
-                "screen_inches": (21, 49),
-                "refresh_hz": (60, 360),
-                "response_time_ms": (0.1, 5),
-                "brightness_nits": (200, 1000)
-            }
+            "soft_candidates": ["response_time_ms", "brightness_nits", "color_gamut_srgb", "color_gamut_dcip3", "color_gamut_adobergb"]
         }
     }
     
-    candidates = key_specs_by_type.get(product_type, {
-        "hard_candidates": list(specs.keys())[:3],
-        "soft_candidates": list(specs.keys())[3:],
-        "ranges": {}
+    return key_specs_by_type.get(product_type, {
+        "hard_candidates": ["price", "ram_gb", "storage_gb"],
+        "soft_candidates": ["screen_inches", "refresh_hz"]
     })
-    
-    # Select hard constraints
-    hard_specs = random.sample(candidates["hard_candidates"], min(num_hard, len(candidates["hard_candidates"])))
-    
-    # Select soft constraints (different from hard constraints)
-    available_soft = [spec for spec in candidates["soft_candidates"] if spec not in hard_specs]
-    if len(available_soft) < num_soft:
-        # If we need more soft constraints, include some hard candidates that weren't selected
-        available_soft += [spec for spec in candidates["hard_candidates"] if spec not in hard_specs]
-    
-    soft_specs = random.sample(available_soft, min(num_soft, len(available_soft)))
-    
-    # Generate constraint values
-    hard_constraints = []
-    soft_constraints = []
-    ranges = candidates["ranges"]
-    
-    for spec in hard_specs:
-        constraint = generate_constraint_value(spec, specs.get(spec), ranges.get(spec), "hard", product_type)
-        if constraint:
-            hard_constraints.append(constraint)
-    
-    for spec in soft_specs:
-        constraint = generate_constraint_value(spec, specs.get(spec), ranges.get(spec), "soft", product_type)
-        if constraint:
-            # Assign a random weight (1-5) to each soft constraint
-            constraint["weight"] = random.randint(1, 5)
-            soft_constraints.append(constraint)
-    
-    return hard_constraints, soft_constraints
-
-def generate_constraint_value(spec_name, current_value, range_info, constraint_type, product_type):
-    """Generate a constraint value based on the spec type and current value."""
-    if current_value is None:
-        return None
-    
-    # For the target product, we need to generate constraints that it will satisfy
-    constraint = {
-        "spec": spec_name,
-        "type": constraint_type
-    }
-    
-    # Handle different types of specs differently
-    if isinstance(current_value, (int, float)):
-        # For numeric specs, generate minimum/maximum constraints
-        if spec_name == "price":
-            # For price, usually set a maximum
-            if constraint_type == "hard":
-                # Hard constraint: set maximum price slightly above current
-                max_price = current_value * random.uniform(1.0, 1.2)
-                constraint["operator"] = "max"
-                constraint["value"] = round(max_price, 2)
-            else:
-                # Soft constraint: prefer lower prices
-                constraint["operator"] = "prefer_lower"
-                constraint["value"] = "lower"
-        
-        elif spec_name in ["ram_gb", "storage_gb", "main_camera_mp", "refresh_hz", "battery_hours", "battery_mah"]:
-            # For these specs, usually set a minimum
-            if constraint_type == "hard":
-                # Hard constraint: set minimum requirement at or below current value
-                min_value = current_value * random.uniform(0.8, 1.0)
-                constraint["operator"] = "min"
-                constraint["value"] = int(min_value) if isinstance(current_value, int) else round(min_value, 1)
-            else:
-                # Soft constraint: prefer higher values
-                constraint["operator"] = "prefer_higher"
-                constraint["value"] = "higher"
-        
-        elif spec_name in ["weight_kg", "weight_g", "response_time_ms"]:
-            # For these specs, lower is usually better
-            if constraint_type == "hard":
-                # Hard constraint: set maximum at or above current value
-                max_value = current_value * random.uniform(1.0, 1.3)
-                constraint["operator"] = "max"
-                constraint["value"] = int(max_value) if isinstance(current_value, int) else round(max_value, 1)
-            else:
-                # Soft constraint: prefer lower values
-                constraint["operator"] = "prefer_lower"
-                constraint["value"] = "lower"
-        
-        elif spec_name in ["screen_inches", "brightness_nits"]:
-            # These can go either way depending on preference
-            if random.random() < 0.5:
-                if constraint_type == "hard":
-                    # Minimum size/brightness
-                    min_value = current_value * random.uniform(0.8, 1.0)
-                    constraint["operator"] = "min"
-                    constraint["value"] = round(min_value, 1)
-                else:
-                    # Prefer larger/brighter
-                    constraint["operator"] = "prefer_higher"
-                    constraint["value"] = "higher"
-            else:
-                if constraint_type == "hard":
-                    # Maximum size/brightness
-                    max_value = current_value * random.uniform(1.0, 1.3)
-                    constraint["operator"] = "max"
-                    constraint["value"] = round(max_value, 1)
-                else:
-                    # Prefer smaller/dimmer
-                    constraint["operator"] = "prefer_lower"
-                    constraint["value"] = "lower"
-    
-    elif isinstance(current_value, str):
-        # For string specs like resolution, panel_type, etc.
-        if spec_name == "resolution":
-            # Resolution can be specified as a minimum
-            if constraint_type == "hard":
-                constraint["operator"] = "min"
-                constraint["value"] = current_value
-            else:
-                constraint["operator"] = "prefer"
-                constraint["value"] = current_value
-        
-        elif spec_name in ["panel_type", "cpu", "gpu"]:
-            if constraint_type == "hard":
-                constraint["operator"] = "is"
-                constraint["value"] = current_value
-            else:
-                constraint["operator"] = "prefer"
-                constraint["value"] = current_value
-    
-    # Add human-readable description
-    constraint["description"] = format_constraint_description(constraint)
-    
-    return constraint
 
 def format_constraint_description(constraint):
     """Format a constraint into a human-readable description."""
@@ -320,92 +320,17 @@ def format_constraint_description(constraint):
     operator = constraint["operator"]
     value = constraint["value"]
     
-    # Map spec names to more readable forms
-    readable_specs = {
-        "price": "price",
-        "ram_gb": "RAM",
-        "storage_gb": "storage",
-        "screen_inches": "screen size",
-        "refresh_hz": "refresh rate",
-        "battery_hours": "battery life",
-        "weight_kg": "weight",
-        "resolution": "resolution",
-        "main_camera_mp": "camera",
-        "battery_mah": "battery capacity",
-        "weight_g": "weight",
-        "panel_type": "panel type",
-        "response_time_ms": "response time",
-        "brightness_nits": "brightness",
-        "cpu": "processor",
-        "gpu": "graphics"
-    }
-    
-    spec_readable = readable_specs.get(spec, spec)
+    spec_readable = READABLE_KEY_MAP.get(spec, spec.replace('_', ' ').title())
     
     # Format based on operator type
     if operator == "min":
-        # Add appropriate units
-        unit = ""
-        if spec == "ram_gb":
-            unit = " GB"
-            if isinstance(value, (int, float)) and value >= 1000:
-                value = value / 1000
-                unit = " TB"
-        elif spec == "storage_gb":
-            if isinstance(value, (int, float)) and value >= 1000:
-                value = value / 1000
-                unit = " TB"
-            else:
-                unit = " GB"
-        elif spec == "refresh_hz":
-            unit = " Hz"
-        elif spec == "battery_hours":
-            unit = " hours"
-        elif spec == "screen_inches":
-            unit = "\""
-        elif spec == "weight_kg":
-            unit = " kg"
-        elif spec == "weight_g":
-            unit = " g"
-        elif spec == "battery_mah":
-            unit = " mAh"
-        elif spec == "response_time_ms":
-            unit = " ms"
-        elif spec == "brightness_nits":
-            unit = " nits"
-        elif spec == "main_camera_mp":
-            unit = " MP"
-            
+        unit = get_unit_for_spec(spec, value)
         return f"Minimum {spec_readable} of {value}{unit}"
     
     elif operator == "max":
-        # Add appropriate units
-        unit = ""
         if spec == "price":
             return f"Maximum price of ${value:,.2f}"
-        elif spec == "ram_gb":
-            unit = " GB"
-        elif spec == "storage_gb":
-            if isinstance(value, (int, float)) and value >= 1000:
-                value = value / 1000
-                unit = " TB"
-            else:
-                unit = " GB"
-        elif spec == "refresh_hz":
-            unit = " Hz"
-        elif spec == "battery_hours":
-            unit = " hours"
-        elif spec == "screen_inches":
-            unit = "\""
-        elif spec == "weight_kg":
-            unit = " kg"
-        elif spec == "weight_g":
-            unit = " g"
-        elif spec == "response_time_ms":
-            unit = " ms"
-        elif spec == "brightness_nits":
-            unit = " nits"
-            
+        unit = get_unit_for_spec(spec, value)
         return f"Maximum {spec_readable} of {value}{unit}"
     
     elif operator == "is":
@@ -422,118 +347,145 @@ def format_constraint_description(constraint):
     
     return f"{spec_readable} {operator} {value}"
 
-def generate_products(llm_client, num_products=NUM_PRODUCTS):
-    """Generate synthetic product data with realistic specifications."""
-    generated_products = []
-    product_types = list(spec_templates.keys())
+def get_unit_for_spec(spec, value):
+    """Get the appropriate unit for a spec value."""
+    if spec == "ram_gb":
+        return " GB"
+    elif spec == "storage_gb":
+        return " TB" if isinstance(value, (int, float)) and value >= 1000 else " GB"
+    elif spec == "refresh_hz":
+        return " Hz"
+    elif spec == "battery_hours":
+        return " hours"
+    elif spec == "screen_inches":
+        return "\""
+    elif spec == "weight_kg":
+        return " kg"
+    elif spec == "weight_g":
+        return " g"
+    elif spec == "battery_mah":
+        return " mAh"
+    elif spec == "response_time_ms":
+        return " ms"
+    elif spec == "brightness_nits":
+        return " nits"
+    elif spec == "main_camera_mp":
+        return " MP"
+    return ""
+
+def generate_constraint_value(spec, current_value, constraint_type):
+    """Generate a constraint value based on the specification."""
+    if current_value is None:
+        return None
     
-    print(f"Generating {num_products} synthetic products...")
+    constraint = {
+        "spec": spec,
+        "type": constraint_type
+    }
     
-    for i in range(num_products):
-        product_type = random.choice(product_types)
-        tiers = list(spec_templates[product_type].keys())
-        tier_name = random.choice(tiers)
-        template = spec_templates[product_type][tier_name]
-        
-        print(f"\n[{i+1}/{num_products}] Generating: {tier_name} {product_type}")
-        
-        # Generate specs based on the template
-        specs = {}
-        spec_details_string = ""
-        readable_key_map = {
-            "ram_gb": "RAM", "storage_gb": "Storage", "cpu": "Processor", "gpu": "Graphics",
-            "screen_inches": "Screen Size", "resolution": "Resolution", "refresh_hz": "Refresh Rate",
-            "battery_hours": "Battery Life (Hours)", "weight_kg": "Weight (kg)", "price": "Price",
-            "battery_mah": "Battery Capacity (mAh)", "main_camera_mp": "Main Camera", "weight_g": "Weight (g)",
-            "panel_type": "Panel Type", "response_time_ms": "Response Time (ms)",
-            "brightness_nits": "Brightness (nits)", "color_gamut_srgb": "sRGB Coverage (%)",
-            "color_gamut_dcip3": "DCI-P3 Coverage (%)", "color_gamut_adobergb": "Adobe RGB Coverage (%)"
-        }
-        
-        for key, value in template.items():
-            generated_value = None
-            unit = ""
-            
-            if isinstance(value, list):
-                generated_value = random.choice(value)
-            elif isinstance(value, tuple) and len(value) == 2:
-                if all(isinstance(x, int) for x in value):
-                    generated_value = random.randint(value[0], value[1])
-                elif all(isinstance(x, float) for x in value):
-                    generated_value = round(random.uniform(value[0], value[1]), 2 if key == 'price' else 1)
+    # Handle different types of specs
+    if isinstance(current_value, (int, float)):
+        if spec == "price":
+            # For price, set maximum
+            if constraint_type == "hard":
+                max_price = current_value * random.uniform(1.0, 1.2)
+                constraint["operator"] = "max"
+                constraint["value"] = round(max_price, 2)
             else:
-                print(f"Warning: Unsupported template format for key '{key}' in {product_type}/{tier_name}")
-                continue
-            
-            specs[key] = generated_value
-            
-            # Format for prompt string
-            readable_key = readable_key_map.get(key, key.replace('_', ' ').title())
-            formatted_value = generated_value
-            
-            # Add units/context for prompt clarity
-            if key == 'price': unit = "$" ; formatted_value = f"{generated_value:,.2f}"
-            elif 'ram_gb' == key: unit = " GB"
-            elif 'storage_gb' == key: 
-                unit = " GB" if generated_value < 1000 else " TB"
-                formatted_value = generated_value if generated_value < 1000 else generated_value // 1000
-            elif 'screen_inches' == key: unit = '"'
-            elif 'weight_kg' == key: unit = " kg"
-            elif 'weight_g' == key: unit = " g"
-            elif 'battery_hours' == key: unit = " hours (est.)"
-            elif 'battery_mah' == key: unit = " mAh"
-            elif 'main_camera_mp' == key: unit = " MP"
-            elif 'refresh_hz' == key: unit = " Hz"
-            elif 'response_time_ms' == key: unit = " ms"
-            elif 'brightness_nits' == key: unit = " nits"
-            elif 'color_gamut' in key: unit = "%"
-            
-            spec_details_string += f"- {readable_key}: {formatted_value}{unit}\n"
+                constraint["operator"] = "prefer_lower"
+                constraint["value"] = "lower"
         
-        # Construct the prompt
-        prompt = f"""
-Generate a realistic product description for the following electronic item:
-
-Product Type: {product_type}
-Tier: {tier_name}
-Specifications:
-{spec_details_string.strip()}
-
-Instructions:
-- Weave ALL the specifications listed above naturally into a compelling product description paragraph or two.
-- The tone should be typical for marketing or product information found on retail websites (e.g., engaging but informative).
-- Highlight one or two key strengths based on the provided specifications (e.g., portability, performance, display quality, battery life, value). Choose strengths relevant to the tier and product type.
-- Ensure the description is coherent, easy to read, and sounds authentic. Avoid just listing the numbers bluntly or starting every sentence the same way.
-- Do not invent significant features or specifications not listed above. You can add minor connecting phrases or common features implied by the specs (e.g., mention SSD speed implicitly if storage is high).
-"""
+        elif spec in ["ram_gb", "storage_gb", "main_camera_mp", "refresh_hz", "battery_hours", "battery_mah"]:
+            # For these specs, set minimum
+            if constraint_type == "hard":
+                min_value = current_value * random.uniform(0.8, 1.0)
+                constraint["operator"] = "min"
+                constraint["value"] = int(min_value) if isinstance(current_value, int) else round(min_value, 1)
+            else:
+                constraint["operator"] = "prefer_higher"
+                constraint["value"] = "higher"
         
-        # Call LLM
-        print(f"  Calling LLM for description...")
-        description = llm_client([user_struct(prompt)])
+        elif spec in ["weight_kg", "weight_g", "response_time_ms"]:
+            # For these specs, lower is better
+            if constraint_type == "hard":
+                max_value = current_value * random.uniform(1.0, 1.3)
+                constraint["operator"] = "max"
+                constraint["value"] = int(max_value) if isinstance(current_value, int) else round(max_value, 1)
+            else:
+                constraint["operator"] = "prefer_lower"
+                constraint["value"] = "lower"
         
-        if description:
-            print(f"  Received description ({len(description)} chars)")
-            product = {
-                "id": i,
-                "product_type": product_type,
-                "tier": tier_name,
-                "specs": specs,
-                "description": description.strip()
-            }
-            generated_products.append(product)
-        else:
-            print(f"  Failed to get description for item {i}. Skipping.")
-        
-        # Delay between requests
-        if LLM_DELAY > 0 and i < num_products - 1:
-            time.sleep(LLM_DELAY)
+        elif spec in ["screen_inches", "brightness_nits"]:
+            # These can go either way
+            if random.random() < 0.5:
+                if constraint_type == "hard":
+                    min_value = current_value * random.uniform(0.8, 1.0)
+                    constraint["operator"] = "min"
+                    constraint["value"] = round(min_value, 1)
+                else:
+                    constraint["operator"] = "prefer_higher"
+                    constraint["value"] = "higher"
+            else:
+                if constraint_type == "hard":
+                    max_value = current_value * random.uniform(1.0, 1.3)
+                    constraint["operator"] = "max"
+                    constraint["value"] = round(max_value, 1)
+                else:
+                    constraint["operator"] = "prefer_lower"
+                    constraint["value"] = "lower"
     
-    return generated_products
+    elif isinstance(current_value, str):
+        # For string specs
+        if constraint_type == "hard":
+            constraint["operator"] = "is" if spec in ["panel_type", "cpu", "gpu"] else "min"
+            constraint["value"] = current_value
+        else:
+            constraint["operator"] = "prefer"
+            constraint["value"] = current_value
+    
+    # Add human-readable description
+    constraint["description"] = format_constraint_description(constraint)
+    
+    return constraint
 
-def generate_request_query(llm_client, target_product, hard_constraints, soft_constraints, query_type):
-    """Generate a search query based on the specified constraints."""
+def select_constraints(target_product, num_hard, num_soft):
+    """Select constraints for a product based on query requirements."""
     product_type = target_product["product_type"]
-    tier = target_product["tier"]
+    specs = target_product["specs"]
+    
+    # Get constraint candidates
+    candidates = select_constraint_key_candidates(product_type)
+    
+    # Select hard constraints
+    hard_specs = random.sample(candidates["hard_candidates"], min(num_hard, len(candidates["hard_candidates"])))
+    
+    # Select soft constraints (different from hard constraints)
+    available_soft = [spec for spec in candidates["soft_candidates"] if spec not in hard_specs]
+    if len(available_soft) < num_soft:
+        available_soft += [spec for spec in candidates["hard_candidates"] if spec not in hard_specs]
+    
+    soft_specs = random.sample(available_soft, min(num_soft, len(available_soft)))
+    
+    # Generate constraint values
+    hard_constraints = []
+    soft_constraints = []
+    
+    for spec in hard_specs:
+        constraint = generate_constraint_value(spec, specs.get(spec), "hard")
+        if constraint:
+            hard_constraints.append(constraint)
+    
+    for spec in soft_specs:
+        constraint = generate_constraint_value(spec, specs.get(spec), "soft")
+        if constraint:
+            constraint["weight"] = random.randint(1, 5)  # Assign random weight 1-5
+            soft_constraints.append(constraint)
+    
+    return hard_constraints, soft_constraints
+
+def generate_query(llm_client, target_product, hard_constraints, soft_constraints, query_type):
+    """Generate a search query based on constraints."""
+    product_type = target_product["product_type"]
     
     # Format constraints for the prompt
     hard_constraints_text = "\n".join([f"- {c['description']}" for c in hard_constraints])
@@ -541,13 +493,12 @@ def generate_request_query(llm_client, target_product, hard_constraints, soft_co
     # Add weights to soft constraint descriptions
     soft_constraints_with_weights = []
     for c in soft_constraints:
-        weight = c.get("weight", 3)  # Default to medium weight (3/5)
+        weight = c.get("weight", 3)
         weight_text = "High" if weight >= 4 else "Medium" if weight >= 2 else "Low"
         soft_constraints_with_weights.append(f"- {c['description']} (Importance: {weight_text})")
     
     soft_constraints_text = "\n".join(soft_constraints_with_weights)
     
-    # Construct the prompt
     prompt = f"""
 Generate a realistic search query for a {product_type} with the following requirements.
 
@@ -571,177 +522,104 @@ Instructions:
 Return ONLY the search query text, with no additional explanation or formatting.
 """
     
-    # Call LLM
-    response = llm_client([
+    return llm_client([
         system_struct("You generate realistic product search queries based on specifications and requirements."),
         user_struct(prompt)
     ])
-    
-    return response.strip()
 
-def check_hard_constraints(product, constraints):
-    """
-    Check if a product satisfies all hard constraints.
-    Returns tuple: (meets_all, results_by_constraint)
-    """
-    if not constraints:
-        return True, {}
-    
-    results = {}
-    for constraint in constraints:
-        spec = constraint["spec"]
-        operator = constraint["operator"]
-        constraint_value = constraint["value"]
-        product_value = product["specs"].get(spec)
-        
-        # Skip if product doesn't have this spec
-        if product_value is None:
-            results[spec] = False
-            continue
-        
-        # Check constraint based on operator
-        if operator == "min":
-            results[spec] = product_value >= constraint_value
-        elif operator == "max":
-            results[spec] = product_value <= constraint_value
-        elif operator == "is":
-            results[spec] = product_value == constraint_value
-        else:
-            # Unknown operator, assume success
-            results[spec] = True
-    
-    # All constraints must be satisfied (AND operation)
-    meets_all = all(results.values())
-    
-    return meets_all, results
-
-def calculate_soft_constraint_score(product, constraints):
-    """
-    Calculate a weighted score based on soft constraints.
-    Returns tuple: (overall_score, scores_by_constraint)
-    """
-    if not constraints:
-        return 0.5, {}  # Middle score if no constraints
-    
-    scores = {}
-    total_weight = 0
-    weighted_sum = 0
-    
-    for constraint in constraints:
-        spec = constraint["spec"]
-        operator = constraint["operator"]
-        constraint_value = constraint["value"]
-        weight = constraint.get("weight", 3)  # Default to medium weight
-        product_value = product["specs"].get(spec)
-        
-        # Skip if product doesn't have this spec
-        if product_value is None:
-            scores[spec] = 0.0
-            continue
-        
-        # Calculate score based on operator
-        score = 0.5  # Default to middle score
-        
-        if operator == "prefer_higher":
-            # Need to normalize based on range for the spec
-            if spec == "ram_gb":
-                score = normalize_value(product_value, 4, 64)
-            elif spec == "storage_gb":
-                score = normalize_value(product_value, 64, 4000)
-            elif spec == "screen_inches":
-                score = normalize_value(product_value, 13, 18)
-            elif spec == "refresh_hz":
-                score = normalize_value(product_value, 60, 360)
-            elif spec == "battery_hours":
-                score = normalize_value(product_value, 3, 18)
-            elif spec == "battery_mah":
-                score = normalize_value(product_value, 3000, 6000)
-            elif spec == "main_camera_mp":
-                score = normalize_value(product_value, 8, 200)
-            elif spec == "brightness_nits":
-                score = normalize_value(product_value, 250, 1000)
-            else:
-                # For other specs, use a default range
-                score = 0.7 if product_value > average_value_for_spec(spec) else 0.3
-        
-        elif operator == "prefer_lower":
-            # Reverse normalization (lower is better)
-            if spec == "price":
-                score = 1.0 - normalize_value(product_value, 100, 3500)
-            elif spec == "weight_kg":
-                score = 1.0 - normalize_value(product_value, 0.8, 3.5)
-            elif spec == "weight_g":
-                score = 1.0 - normalize_value(product_value, 120, 250)
-            elif spec == "response_time_ms":
-                score = 1.0 - normalize_value(product_value, 0.1, 5.0)
-            else:
-                # For other specs, use a default range
-                score = 0.7 if product_value < average_value_for_spec(spec) else 0.3
-        
-        elif operator == "prefer":
-            # For exact matches (resolution, panel type, etc.)
-            if product_value == constraint_value:
-                score = 1.0
-            else:
-                score = 0.2
-        
-        # Store the score and add to weighted sum
-        scores[spec] = score
-        weighted_sum += score * weight
-        total_weight += weight
-    
-    # Calculate weighted average
-    if total_weight > 0:
-        overall_score = weighted_sum / total_weight
-    else:
-        overall_score = 0.5
-    
-    return overall_score, scores
-
-def normalize_value(value, min_val, max_val):
+def normalize_value(value, spec):
     """Normalize a value to a 0-1 scale based on min/max range."""
+    min_val, max_val = SPEC_RANGES.get(spec, (0, 100))
+    
     if value <= min_val:
         return 0.0
     if value >= max_val:
         return 1.0
     return (value - min_val) / (max_val - min_val)
 
-def average_value_for_spec(spec):
-    """Return a reasonable average value for a spec type."""
-    averages = {
-        "price": 800,
-        "ram_gb": 16,
-        "storage_gb": 512,
-        "screen_inches": 15,
-        "refresh_hz": 120,
-        "battery_hours": 8,
-        "weight_kg": 1.5,
-        "weight_g": 180,
-        "battery_mah": 4500,
-        "main_camera_mp": 50,
-        "response_time_ms": 2,
-        "brightness_nits": 350
-    }
-    return averages.get(spec, 0)
+def check_constraint_satisfaction(product, constraint):
+    """Check if a product satisfies a single constraint."""
+    spec = constraint["spec"]
+    operator = constraint["operator"]
+    constraint_value = constraint["value"]
+    product_value = product["specs"].get(spec)
+    
+    # Skip if product doesn't have this spec
+    if product_value is None:
+        return False
+    
+    # Check constraint based on operator
+    if operator == "min":
+        return product_value >= constraint_value
+    elif operator == "max":
+        return product_value <= constraint_value
+    elif operator == "is":
+        return product_value == constraint_value
+    
+    # For preference operators, return True (they don't disqualify products)
+    return True
+
+def calculate_soft_constraint_score(product, constraint):
+    """Calculate score for a single soft constraint."""
+    spec = constraint["spec"]
+    operator = constraint["operator"]
+    product_value = product["specs"].get(spec)
+    
+    # Skip if product doesn't have this spec
+    if product_value is None:
+        return 0.0
+    
+    # Calculate score based on operator
+    if operator == "prefer_higher":
+        if spec in SPEC_RANGES:
+            return normalize_value(product_value, spec)
+        return 0.7 if product_value > AVG_SPEC_VALUES.get(spec, 0) else 0.3
+    
+    elif operator == "prefer_lower":
+        if spec in SPEC_RANGES:
+            return 1.0 - normalize_value(product_value, spec)
+        return 0.7 if product_value < AVG_SPEC_VALUES.get(spec, 0) else 0.3
+    
+    elif operator == "prefer":
+        return 1.0 if product_value == constraint["value"] else 0.2
+    
+    return 0.5  # Default middle score
 
 def generate_relevance_scores(products, target_product, hard_constraints, soft_constraints):
-    """Generate ground truth relevance scores for all products based on constraints."""
+    """Generate ground truth relevance scores for all products."""
     relevance_scores = []
+    threshold_position = None
+    product_type = target_product["product_type"]
     
-    for product in products:
-        # Check hard constraints first (AND operation)
-        meets_hard, hard_results = check_hard_constraints(product, hard_constraints)
+    # First filter to only include products of the matching type
+    matching_type_products = [p for p in products if p["product_type"] == product_type]
+    
+    for product in matching_type_products:
+        # Check each hard constraint
+        hard_results = {c["spec"]: check_constraint_satisfaction(product, c) for c in hard_constraints}
+        meets_all_hard = all(hard_results.values())
         
-        # Calculate soft constraint score only if hard constraints are met
-        if meets_hard:
-            soft_score, soft_results = calculate_soft_constraint_score(product, soft_constraints)
-        else:
-            soft_score, soft_results = 0.0, {}
+        # Calculate soft constraint scores
+        soft_results = {}
+        weighted_sum = 0
+        total_weight = 0
         
-        # The overall score is 0 if hard constraints not met
-        overall_score = soft_score if meets_hard else 0.0
+        for constraint in soft_constraints:
+            spec = constraint["spec"]
+            weight = constraint.get("weight", 3)
+            score = calculate_soft_constraint_score(product, constraint)
+            
+            soft_results[spec] = score
+            weighted_sum += score * weight
+            total_weight += weight
         
-        # Boost score for target product (to ensure it ranks well)
+        # Overall soft score (weighted average)
+        soft_score = weighted_sum / total_weight if total_weight > 0 else 0.5
+        
+        # Final score - 0 if hard constraints not met
+        overall_score = soft_score if meets_all_hard else 0.0
+        
+        # Boost score for target product
         if product["id"] == target_product["id"]:
             overall_score = min(1.0, overall_score * 1.1)
         
@@ -749,7 +627,7 @@ def generate_relevance_scores(products, target_product, hard_constraints, soft_c
             "product_id": product["id"],
             "product_type": product["product_type"],
             "tier": product["tier"],
-            "meets_hard_constraints": meets_hard,
+            "meets_hard_constraints": meets_all_hard,
             "hard_constraint_results": hard_results,
             "soft_constraint_score": soft_score,
             "soft_constraint_results": soft_results,
@@ -759,10 +637,33 @@ def generate_relevance_scores(products, target_product, hard_constraints, soft_c
     # Sort by overall score (descending)
     relevance_scores.sort(key=lambda x: x["overall_score"], reverse=True)
     
-    return relevance_scores
+    # Find threshold position where products stop meeting hard constraints
+    for i, score in enumerate(relevance_scores):
+        if not score["meets_hard_constraints"]:
+            threshold_position = i
+            break
+    
+    return relevance_scores, threshold_position
 
-def generate_requests(llm_client, products, num_requests=NUM_REQUESTS):
-    """Generate search queries with hard and soft constraints."""
+def generate_full_ranked_list(products, relevance_scores):
+    """Generate full ranked list with threshold indication."""
+    # Create a mapping from product_id to relevance score details
+    score_map = {score["product_id"]: score for score in relevance_scores}
+    
+    # Generate full ranked list with all products
+    full_ranked_list = []
+    for i, product_id in enumerate([score["product_id"] for score in relevance_scores]):
+        full_ranked_list.append({
+            "rank": i + 1,
+            "product_id": product_id,
+            "score": score_map[product_id]["overall_score"],
+            "meets_constraints": score_map[product_id]["meets_hard_constraints"]
+        })
+    
+    return full_ranked_list
+
+def generate_requests(llm_client, products, num_requests=CONFIG["num_requests"]):
+    """Generate search queries with constraints and filtered rankings."""
     generated_requests = []
     
     # Select target products randomly
@@ -776,11 +677,9 @@ def generate_requests(llm_client, products, num_requests=NUM_REQUESTS):
         
         print(f"\n[{i+1}/{len(target_indices)}] Generating {query_type['name']} query for {target_product['product_type']} (Tier: {target_product['tier']})")
         
-        # Step 1: Generate constraint specifications
-        hard_constraints, soft_constraints = select_constraint_specs(
-            target_product["product_type"],
-            target_product["tier"],
-            target_product["specs"],
+        # Generate constraints
+        hard_constraints, soft_constraints = select_constraints(
+            target_product,
             query_type["hard_constraints"],
             query_type["soft_constraints"]
         )
@@ -794,8 +693,8 @@ def generate_requests(llm_client, products, num_requests=NUM_REQUESTS):
         for constraint in soft_constraints:
             print(f"  - {constraint['description']} (Weight: {constraint['weight']})")
         
-        # Step 2: Generate search query based on constraints
-        query_text = generate_request_query(
+        # Generate search query
+        query_text = generate_query(
             llm_client, 
             target_product, 
             hard_constraints, 
@@ -809,13 +708,17 @@ def generate_requests(llm_client, products, num_requests=NUM_REQUESTS):
             
         print(f"  Query: {query_text}")
         
-        # Step 3: Generate relevance scores
-        relevance_scores = generate_relevance_scores(
+        # Generate relevance scores and filtering
+        relevance_scores, threshold_position = generate_relevance_scores(
             products, 
             target_product, 
             hard_constraints, 
             soft_constraints
         )
+        
+        # Filter to only products meeting hard constraints and get their IDs
+        valid_items = [score for score in relevance_scores if score["meets_hard_constraints"]]
+        ranked_list = [item["product_id"] for item in valid_items]
         
         # Create request
         request = {
@@ -825,88 +728,58 @@ def generate_requests(llm_client, products, num_requests=NUM_REQUESTS):
             "product_type": target_product["product_type"],
             "tier": target_product["tier"],
             "query_type": query_type["name"],
-            "hard_constraints": [c for c in hard_constraints],
-            "soft_constraints": [c for c in soft_constraints],
-            "relevance_scores": relevance_scores[:20]  # Top 20 most relevant products
+            "hard_constraints": hard_constraints,
+            "soft_constraints": soft_constraints,
+            "ranked_list": ranked_list,  # Only include valid items
+            "threshold_position": threshold_position
         }
         
         generated_requests.append(request)
         
         # Delay between requests
-        if LLM_DELAY > 0 and i < len(target_indices) - 1:
-            time.sleep(LLM_DELAY)
+        if i < len(target_indices) - 1 and CONFIG["llm_delay"] > 0:
+            time.sleep(CONFIG["llm_delay"])
     
     return generated_requests
 
-def create_baseline_compatible_format(products, requests):
-    """Create a format compatible with baseline retrieval methods."""
-    compatible_items = []
-    for product in products:
-        compatible_items.append({
-            "item_id": str(product["id"]),
-            "metadata": product["description"],
-            "summary": f"{product['product_type']} - {product['tier']}",
-            "category": product["product_type"]
-        })
-    
-    compatible_requests = []
-    for req in requests:
-        compatible_requests.append({
-            "item_id": str(req["target_product_id"]),
-            "query": req["query"],
-            "qid": str(req["id"]),
-            "user_id": "synthetic_user"
-        })
-    
-    return {
-        "compatible_items": compatible_items,
-        "compatible_requests": compatible_requests
-    }
-
 def main():
+    """Main execution function."""
     # Create output directory
-    ensure_dir(OUTPUT_DIR)
+    ensure_dir(CONFIG["output_dir"])
     
     # Initialize LLM client
     llm_client = create_llm_client()
     print("LLM Client initialized successfully.")
     
-    product_path = os.path.join(OUTPUT_DIR, PRODUCT_FILENAME)
+    product_path = Path(CONFIG["output_dir"]) / CONFIG["filenames"]["products"]
     
     # Check if products already exist
-    if os.path.exists(product_path):
+    if product_path.exists():
         print(f"Loading existing products from {product_path}")
         with open(product_path, 'r') as f:
+            import json
             products = json.load(f)
     else:
         # Generate products
-        products = generate_products(llm_client, NUM_PRODUCTS)
+        products = generate_products(llm_client, CONFIG["num_products"])
         
         # Save products
         dumpj(products, product_path)
         print(f"Generated and saved {len(products)} products to {product_path}")
     
-    # Generate requests
-    requests = generate_requests(llm_client, products, NUM_REQUESTS)
-    
+    # Generate requests with filtered rankings
+    requests = generate_requests(llm_client, products, CONFIG["num_requests"])
+
     # Save requests
-    requests_path = os.path.join(OUTPUT_DIR, REQUESTS_FILENAME)
+    requests_path = Path(CONFIG["output_dir"]) / CONFIG["filenames"]["requests"]
     dumpj(requests, requests_path)
     print(f"Generated and saved {len(requests)} requests to {requests_path}")
-    
-    # Create baseline compatible format
-    compatible_data = create_baseline_compatible_format(products, requests)
-    
-    # Save compatible data
-    compatible_path = os.path.join(OUTPUT_DIR, COMPATIBLE_FILENAME)
-    dumpj(compatible_data, compatible_path)
-    print(f"Created and saved baseline-compatible format to {compatible_path}")
-    
+
     # Print summary
     print("\nDataset Generation Complete")
     print(f"Products: {len(products)}")
     print(f"Requests: {len(requests)}")
-    print(f"All files saved to directory: {OUTPUT_DIR}")
+    print(f"All files saved to directory: {CONFIG['output_dir']}")
 
 if __name__ == "__main__":
     main()
